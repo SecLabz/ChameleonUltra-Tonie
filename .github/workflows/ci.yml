@@ -133,6 +133,8 @@ jobs:
           cat > release-notes.md <<'NOTES'
           Download the signed application-only DFU ZIP for Chameleon Ultra and install it through the existing Nordic DFU bootloader. The embedded UI reports the release tag as the firmware version.
 
+          Flash the downloaded DFU ZIP with the [Chameleon Ultra web flasher](https://taichunmin.idv.tw/chameleon-ultra.js/dfu.html).
+
           The ZIP contains the signed application, build identity and dependency notices. Follow docs/updates.md for DFU entry, device selection and installation.
 
           Build/tests do not establish hardware or Toniebox compatibility; see docs/development.md and docs/nfcv.md.
