@@ -1,0 +1,9 @@
+[submodule "deps/chameleon"]
+	path = deps/chameleon
+	url = https://github.com/RfidResearchGroup/ChameleonUltra.git
+[submodule "deps/tinyusb"]
+	path = deps/tinyusb
+	url = https://github.com/hathach/tinyusb.git
+[submodule "deps/lwip"]
+	path = deps/lwip
+	url = https://github.com/lwip-tcpip/lwip.git

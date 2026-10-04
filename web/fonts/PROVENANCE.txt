@@ -1,0 +1,11 @@
+Baloo 2: https://github.com/EkType/Baloo2
+Nunito: https://github.com/googlefonts/nunito
+
+Latin WOFF2 subsets downloaded from Google Fonts on 2026-10-03:
+https://fonts.gstatic.com/s/baloo2/v23/wXK0E3kTposypRydzVT08TS3JnAmtdiayppo_lc.woff2
+https://fonts.gstatic.com/s/nunito/v32/XRXV3I6Li01BKofINeaB.woff2
+
+Both fonts use the SIL Open Font License 1.1. Full notices are preserved
+in Baloo2-OFL.txt and Nunito-OFL.txt and embedded in the served page.
+Baloo 2 uses weight 800; Nunito is variable with weights 400 through 800.
+No network font requests are made by the firmware UI.

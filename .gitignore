@@ -1,0 +1,13 @@
+build/
+.deps/
+.local.env
+__pycache__/
+*.pyc
+.DS_Store
+# Private keys and imported user dumps never belong in Git.
+*.pem
+*.key
+*.bin
+*.nfc
+private/
+.vscode

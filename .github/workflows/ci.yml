@@ -1,0 +1,145 @@
+name: CI and tagged releases
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: Local tests and Ultra firmware
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      FIRMWARE_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '0.1.0-dev' }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          submodules: true
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Validate firmware version
+        run: make version
+      - name: Install external ARM toolchain
+        shell: bash
+        run: |
+          bash .github/scripts/install-deps.sh "$RUNNER_TEMP/chameleon-deps"
+          {
+            echo "SDK=$GITHUB_WORKSPACE/deps/chameleon/firmware/nrf52_sdk"
+            echo "TINYUSB=$GITHUB_WORKSPACE/deps/tinyusb"
+            echo "LWIP=$GITHUB_WORKSPACE/deps/lwip"
+            echo "ARM_PREFIX=$RUNNER_TEMP/chameleon-deps/arm/bin/arm-none-eabi-"
+          } >> "$GITHUB_ENV"
+      - name: Run local tests
+        run: make test HOST_CC=clang
+      - name: Build production firmware
+        run: make app
+      - name: Install Nordic signing tools
+        shell: bash
+        run: |
+          bash .github/scripts/install-signing-tools.sh "$RUNNER_TEMP/chameleon-deps"
+          {
+            echo "$RUNNER_TEMP/chameleon-deps/nrfutil/data/bin"
+            echo "$HOME/.nrfutil/bin"
+          } >> "$GITHUB_PATH"
+      - name: Test published and disposable DFU signing keys
+        run: make test-release
+      - name: Collect dependency notices
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/notices
+          cp LICENSE build/notices/PROJECT-LICENSE
+          cp deps/chameleon/LICENSE build/notices/CHAMELEONULTRA-LICENSE
+          cp "$SDK/documentation/licenses.txt" build/notices/SDK-LICENSES.txt
+          cp "$SDK/documentation/nRF5_Nordic_license.txt" build/notices/NORDIC-LICENSE.txt
+          cp "$SDK/modules/nrfx/LICENSE" build/notices/NRFX-LICENSE
+          cp "$SDK/modules/nrfx/mdk/gcc_startup_nrf52840.S" build/notices/ARM-STARTUP-NOTICE.S
+          cp "$SDK/components/toolchain/cmsis/include/"{core_cm4.h,cmsis_gcc.h,cmsis_compiler.h,cmsis_version.h} build/notices/
+          cp "$TINYUSB/LICENSE" build/notices/TINYUSB-LICENSE
+          cp "$TINYUSB/src/class/net/ecm_rndis_device.c" build/notices/TINYUSB-NETWORK-NOTICE.c
+          cp "$TINYUSB/lib/networking/"{rndis_protocol.h,ndis.h} build/notices/
+          cp "$LWIP/COPYING" build/notices/LWIP-LICENSE
+          cp src/config/app.ld build/notices/app.ld
+          cp web/fonts/*-OFL.txt web/fonts/PROVENANCE.txt build/notices/
+          cp docs/development.md docs/updates.md build/notices/
+          cp "$RUNNER_TEMP/chameleon-deps/arm/license.txt" build/notices/ARM-TOOLCHAIN-LICENSE.txt
+          cp "$RUNNER_TEMP/chameleon-deps/nrfutil/data/share/nrfutil-core/LICENSE" build/notices/NRFUTIL-LICENSE
+          cp "$HOME/.nrfutil/share/nrfutil-nrf5sdk-tools/LICENSE" build/notices/NRF5SDK-TOOLS-LICENSE
+          "$ARM_PREFIX"gcc --version > build/notices/COMPILER.txt
+      - name: Sign and verify application-only DFU ZIP
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          DFU_PUBLIC_KEY_HEX: ${{ vars.DFU_PUBLIC_KEY_HEX }}
+          DFU_SD_REQ: ${{ vars.DFU_SD_REQ }}
+          DFU_APPLICATION_VERSION: ${{ vars.DFU_APPLICATION_VERSION }}
+        run: |
+          python3 tools/release.py sign \
+            --key-file deps/chameleon/resource/dfu_key/chameleon.pem \
+            --version "$FIRMWARE_VERSION" --notices build/notices \
+            --package "build/release/ChameleonUltra-Tonie-$FIRMWARE_VERSION-dfu.zip"
+      - name: Upload signed DFU ZIP
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ultra-signed-dfu
+          path: build/release/ChameleonUltra-Tonie-${{ env.FIRMWARE_VERSION }}-dfu.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out package verifier
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Download tested firmware
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ultra-signed-dfu
+          path: release
+      - name: Verify artifacts and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          DFU_PUBLIC_KEY_HEX: ${{ vars.DFU_PUBLIC_KEY_HEX }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="release/ChameleonUltra-Tonie-$RELEASE_TAG-dfu.zip"
+          python3 tools/release.py verify --version "$RELEASE_TAG" --package "$package"
+          cat > release-notes.md <<'NOTES'
+          Download the signed application-only DFU ZIP for Chameleon Ultra and install it through the existing Nordic DFU bootloader. The embedded UI reports the release tag as the firmware version.
+
+          The ZIP contains the signed application, build identity and dependency notices. Follow docs/updates.md for DFU entry, device selection and installation.
+
+          Build/tests do not establish hardware or Toniebox compatibility; see docs/development.md and docs/nfcv.md.
+          NOTES
+          flags=(--prerelease=false)
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            flags=(--prerelease --latest=false)
+          fi
+          gh release create "$RELEASE_TAG" "$package" --verify-tag \
+            --title "$RELEASE_TAG" --generate-notes --notes-file release-notes.md "${flags[@]}"

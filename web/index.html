@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="theme-color" content="#1c224b" />
+    <title>ChameleonUltra-Tonie</title>
+    <style>
+      /*STYLE*/
+    </style>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="#favorites"
+        ><span class="brandmark">◉</span> ChameleonUltra<span>-Tonie</span></a
+      ><span id="battery" aria-label="Battery">—</span>
+    </header>
+    <main>
+      <section id="favorites" class="page">
+        <div class="page-heading">
+          <div><h1>Favorites</h1></div>
+          <button class="quiet" id="manage-favorites" aria-pressed="false">Manage</button>
+        </div>
+        <div id="active-panel"></div>
+        <div id="favorite-grid" class="favorite-grid"></div>
+      </section>
+      <section id="library" class="page" hidden>
+        <div class="page-heading">
+          <div>
+            <h1>Library</h1>
+            <p id="library-count">Stored on your Ultra</p>
+          </div>
+          <div class="library-actions">
+            <button class="quiet" id="export-all">Export all</button
+            ><button class="primary" id="import-button">＋ Import</button>
+          </div>
+        </div>
+        <label class="search"
+          ><span>⌕</span
+          ><input id="search" type="search" placeholder="Find a tag" aria-label="Find a tag"
+        /></label>
+        <div id="tag-list"></div>
+      </section>
+      <section id="device" class="page" hidden>
+        <div class="page-heading">
+          <div>
+            <h1>Chameleon Ultra</h1>
+            <p id="firmware-version">ChameleonUltra-Tonie</p>
+          </div>
+        </div>
+        <div class="metrics">
+          <article><span>Battery</span><strong id="device-battery">—</strong></article>
+          <article><span>Library</span><strong id="device-count">—</strong></article>
+        </div>
+        <div class="device-card">
+          <h2>Buttons</h2>
+          <dl>
+            <div>
+              <dt>A · short press</dt>
+              <dd>Previous favorite</dd>
+            </div>
+            <div>
+              <dt>B · short press</dt>
+              <dd>Next favorite</dd>
+            </div>
+            <div>
+              <dt>A · hold</dt>
+              <dd>Battery level</dd>
+            </div>
+          </dl>
+        </div>
+        <div class="device-card">
+          <h2>Library</h2>
+          <div class="actions">
+            <button id="library-reset" class="quiet danger">Erase library</button>
+          </div>
+        </div>
+        <div class="device-card firmware-update">
+          <h2>Firmware update</h2>
+          <p>Restart in DFU mode to install ChameleonUltra-Tonie over USB.</p>
+          <button id="bootloader">Restart in DFU mode</button>
+          <p class="small">
+            Manual recovery: hold A while connecting USB. Use an application-only DFU package.
+          </p>
+        </div>
+      </section>
+    </main>
+    <div id="live-strip" hidden></div>
+    <nav aria-label="Main navigation">
+      <a href="#favorites" data-page="favorites"><span>☆</span>Favorites</a
+      ><a href="#library" data-page="library"><span>▤</span>Library</a
+      ><a href="#device" data-page="device"><span>▣</span>Device</a>
+    </nav>
+    <input id="files" type="file" accept=".nfc" multiple hidden />
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+    <dialog id="modal" aria-labelledby="modal-title">
+      <form method="dialog">
+        <div class="modal-head">
+          <h2 id="modal-title"></h2>
+          <button id="modal-close" type="button" aria-label="Close" class="quiet">✕</button>
+        </div>
+        <div id="modal-body"></div>
+        <div class="actions">
+          <button id="modal-cancel" type="button">Cancel</button
+          ><button id="modal-confirm" type="submit" value="confirm" class="primary">Save</button>
+        </div>
+      </form>
+    </dialog>
+    <script type="module">
+      /*SCRIPT*/
+    </script>
+  </body>
+</html>
