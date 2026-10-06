@@ -21,6 +21,8 @@ the buttons.
 
 ## See it in action
 
+https://github.com/user-attachments/assets/14ebd63d-b2e0-49a1-87a2-8f7c22ec95e9
+
 |                                                                                     Favorites                                                                                      |                                                                                Library                                                                                |                                                                                     Device                                                                                      |
 | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
 | <a href="docs/media/readme/web-favorites.webp"><img src="docs/media/readme/web-favorites.webp" alt="Favorites with an active tag and eight color-coded shortcuts" width="230"></a> | <a href="docs/media/readme/web-library.webp"><img src="docs/media/readme/web-library.webp" alt="Tag library with search, import, and synthetic UIDs" width="230"></a> | <a href="docs/media/readme/web-device.webp"><img src="docs/media/readme/web-device.webp" alt="Device page with battery, button guide, and DFU update controls" width="230"></a> |
