@@ -114,8 +114,6 @@ def main():
                 str(args.package.resolve()),
                 "--serial-number",
                 args.serial,
-                "--options",
-                "mcu_end_state=NRFDL_MCU_STATE_APPLICATION",
             ],
             check=True,
             timeout=90,

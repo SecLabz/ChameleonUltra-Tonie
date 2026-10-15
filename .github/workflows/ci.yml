@@ -72,6 +72,7 @@ jobs:
           cp "$SDK/components/toolchain/cmsis/include/"{core_cm4.h,cmsis_gcc.h,cmsis_compiler.h,cmsis_version.h} build/notices/
           cp "$TINYUSB/LICENSE" build/notices/TINYUSB-LICENSE
           cp "$TINYUSB/src/class/net/ecm_rndis_device.c" build/notices/TINYUSB-NETWORK-NOTICE.c
+          cp src/net/rndis.c build/notices/TINYUSB-RNDIS-NOTICE.c
           cp "$TINYUSB/lib/networking/"{rndis_protocol.h,ndis.h} build/notices/
           cp "$LWIP/COPYING" build/notices/LWIP-LICENSE
           cp src/config/app.ld build/notices/app.ld

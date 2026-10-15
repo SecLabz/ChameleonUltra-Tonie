@@ -20,7 +20,8 @@ Use pinned commits, not `git submodule update --remote`. Optional `SDK`,
 `TINYUSB`, `LWIP`, and `ARM_PREFIX` overrides go in ignored `.local.env`.
 
 Without embedded dependencies: `make test-core test-phy test-controls test-app test-web test-tools`.
-The full suite also tests DHCP with lwIP and HTTP on localhost:8080; stop an
+The full suite also tests USB descriptors and RNDIS control messages using
+the pinned TinyUSB headers, DHCP with lwIP, and HTTP on localhost:8080; stop an
 existing simulator first. Tests use simulated RF/flash and never contact USB hardware.
 
 ## Try locally
@@ -45,7 +46,31 @@ Embedded gzip page → /api/v1 → application/library
                              → NFC-V session → SLIX engine → GPIO PHY
 ```
 
-TinyUSB supplies CDC-ECM; lwIP uses raw TCP. The page, fonts, and notices are
+TinyUSB supplies two mutually exclusive USB configurations: RNDIS first for
+Windows, CDC-ECM second for ECM hosts. Both share endpoints and the same lwIP
+interface, DHCP server, HTTP API, and address. Microsoft OS 1.0 descriptors
+advertise the built-in RNDIS driver. The application PID is `cafe:4061` (formerly
+ECM-only `cafe:4060`) to avoid reusing cached driver bindings; the DFU identity
+is unchanged. The RNDIS handler is adapted from TinyUSB's pinned implementation, checks
+request lengths against its 120-byte buffer, and reports the same host adapter
+MAC as the ECM descriptor. The lwIP device MAC differs in its final bit.
+
+Run `make test-usb` for host-only descriptor, driver-association, MAC, RNDIS
+initialization/query/filter/reset/keepalive, and malformed-request checks.
+These checks cannot establish Windows driver recognition. Authorized hardware
+validation must check automatic enumeration and DHCP, opening `192.168.7.1`,
+and unplug/replug with each transport; on Windows 10/11, verify the built-in
+RNDIS driver loads without a custom INF. Linux can exercise both configurations
+but cannot validate Windows binding. Keep the physical DFU recovery route and
+a working signed application package available when testing USB changes.
+
+RNDIS DHCP, HTTP, and DFU entry were validated on Linux with `rndis_host`;
+web access on Windows 11 was reported working with `v0.1.0-ecm-rndis.2`.
+Windows 10, the new layout's ECM configuration, and iPhone still need hardware
+validation. In a VM, attach the application (`cafe:4061`) or DFU (`1915:521f`)
+to the intended OS; Windows cannot use an adapter passed through to Linux.
+
+lwIP uses raw TCP. The page, fonts, and notices are
 local; gzip is served directly from flash. Keep the unauthenticated
 [HTTP API](#http-api) on its USB link: tag passwords are plaintext in flash.
 

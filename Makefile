@@ -42,12 +42,12 @@ LWIP_SRC = $(wildcard $(LWIP)/src/core/*.c) $(wildcard $(LWIP)/src/core/ipv4/*.c
 APP_SRC = $(COMMON) $(PROTOCOL) $(START) $(USB) $(LWIP_SRC) \
           $(SDK)/modules/nrfx/drivers/src/nrfx_nfct.c \
           $(SDK)/modules/nrfx/drivers/src/nrfx_timer.c \
-          src/net/http.c src/net/network.c src/net/dhcp.c \
+          src/net/http.c src/net/network.c src/net/dhcp.c src/net/rndis.c \
           src/platform/ultra/nfcv_gpio.c src/tag/nfcv_emulation.c src/platform/ultra/platform.c \
           src/platform/ultra/usb.c src/platform/ultra/clock.c src/platform/ultra/flash.c \
           src/platform/ultra/battery.c src/platform/ultra/controls.c src/platform/ultra/power.c src/main.c
 
-.PHONY: all version web host app test test-core test-phy test-controls test-app test-dhcp test-web test-http-parser test-http test-tools \
+.PHONY: all version web host app test test-core test-phy test-controls test-app test-dhcp test-usb test-web test-http-parser test-http test-tools \
         test-release check-deps check-sdk check-tinyusb check-lwip clean
 
 all: app
@@ -66,7 +66,7 @@ host: web
 		$(COMMON) src/net/http.c src/host/main.c -o build/tonie-host
 
 # Local tests use simulated RF/flash and never connect to USB hardware.
-test: test-core test-phy test-controls test-app test-dhcp test-web test-http-parser test-http test-tools
+test: test-core test-phy test-controls test-app test-dhcp test-usb test-web test-http-parser test-http test-tools
 
 test-core: | build
 	$(HOST_CC) $(BASEFLAGS) $(INCLUDES) $(SANITIZERS) \
@@ -91,6 +91,12 @@ test-dhcp: check-lwip | build
 		-Isrc -Isrc/config -I$(LWIP)/src/include $(SANITIZERS) \
 		$(DHCP_TEST_SRC) $(HOST_GC) -o build/test-dhcp
 	UBSAN_OPTIONS=halt_on_error=1 build/test-dhcp
+
+test-usb: check-tinyusb check-lwip | build
+	$(HOST_CC) $(BASEFLAGS) $(INCLUDES) $(SANITIZERS) -DPLATFORM_HOST \
+		-I$(TINYUSB)/src -I$(TINYUSB)/lib/networking -I$(LWIP)/src/include \
+		src/common/bytes.c src/platform/ultra/usb.c src/net/rndis.c tests/usb.c -o build/test-usb
+	UBSAN_OPTIONS=halt_on_error=1 build/test-usb
 
 test-tools:
 	python3 tests/dfu.py
