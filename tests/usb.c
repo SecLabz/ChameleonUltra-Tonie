@@ -1,6 +1,7 @@
 /* Exercise production descriptors and the RNDIS handler without USB hardware. */
 #include "common/bytes.h"
 #include "tusb.h"
+#include "device/dcd.h"
 #include "rndis_protocol.h"
 #include <assert.h>
 #include <stdio.h>
@@ -10,7 +11,14 @@ extern void rndis_class_set_handler(uint8_t *, int);
 extern bool tud_vendor_control_xfer_cb(uint8_t, uint8_t, const tusb_control_request_t *);
 static unsigned notifications, transfers;
 static _Alignas(uint32_t) uint8_t control[120];
-static uint8_t compatible_id[40];
+static uint8_t ms_set[38];
+static unsigned acknowledgements;
+static bool mounted;
+static bool accept_status = true;
+bool tud_mounted(void) { return mounted; }
+bool tud_control_status(uint8_t port, const tusb_control_request_t *request) {
+    assert(port == 0 && request->wIndex == 8); acknowledgements++; return accept_status;
+}
 
 void netd_report(uint8_t *data, uint16_t size) {
     assert(size == 8 && data[0] == 1);
@@ -18,60 +26,93 @@ void netd_report(uint8_t *data, uint16_t size) {
 }
 bool tud_control_xfer(uint8_t port, const tusb_control_request_t *request, void *data,
                       uint16_t size) {
-    assert(port == 0 && request->wIndex == 4 && size == sizeof(compatible_id));
-    memcpy(compatible_id, data, size);
+    assert(port == 0 && request->wIndex == 7 && size == sizeof(ms_set));
+    memcpy(ms_set, data, size);
     transfers++;
     return true;
 }
 
 static void test_usb_descriptors(void) {
     const tusb_desc_device_t *device = (const void *)tud_descriptor_device_cb();
-    assert(device->bNumConfigurations == 2 && device->idProduct == 0x4061);
-    for (unsigned i = 0; i < 2; i++) {
-        const uint8_t *config = tud_descriptor_configuration_cb(i);
-        unsigned total = read_le16(config + 2), interfaces = 0, endpoints = 0;
-        assert(config[4] == 2 && config[5] == i + 1);
-        assert(total == TUD_CONFIG_DESC_LEN + (i ? TUD_CDC_ECM_DESC_LEN : TUD_RNDIS_DESC_LEN));
-        unsigned pos = 0;
+    assert(device->bNumConfigurations == 1 && device->idProduct == 0x4062 && device->idVendor == 0xcafe);
+    assert(device->bcdDevice == 0x0100 && device->bcdUSB == 0x0201);
+    const uint8_t *bos = tud_descriptor_bos_cb();
+    assert(bos[0] == 5 && bos[1] == TUSB_DESC_BOS && read_le16(bos + 2) == 33 && bos[4] == 1);
+    assert(bos[5] == 28 && bos[6] == TUSB_DESC_DEVICE_CAPABILITY && bos[7] == DEVICE_CAPABILITY_PLATFORM);
+    const uint8_t uuid[] = {TUD_BOS_MS_OS_20_UUID};
+    assert(!memcmp(bos + 9, uuid, sizeof(uuid)) && read_le32(bos + 25) == 0x06030000);
+    assert(read_le16(bos + 29) == sizeof(ms_set) && bos[31] == 0x20 && bos[32] == 1);
+    tusb_control_request_t request = {.bmRequestType=0xc0,.bRequest=0x20,.wIndex=7,.wLength=sizeof(ms_set)};
+    assert(tud_vendor_control_xfer_cb(0,CONTROL_STAGE_SETUP,&request) && transfers == 1);
+    assert(read_le16(ms_set) == 10 && read_le16(ms_set + 2) == 0);
+    assert(read_le32(ms_set + 4) == 0x06030000 && read_le16(ms_set + 8) == sizeof(ms_set));
+    assert(read_le16(ms_set + 10) == 8 && read_le16(ms_set + 12) == 2 && ms_set[14] == 0);
+    assert(read_le16(ms_set + 16) == 28 && read_le16(ms_set + 18) == 20 && read_le16(ms_set + 20) == 3);
+    assert(!memcmp(ms_set + 22,"RNDIS\0\0\0",8) && !memcmp(ms_set + 30,"5162001\0",8));
+    assert(tud_vendor_control_xfer_cb(0,CONTROL_STAGE_ACK,&request) && transfers == 1);
+    request.wValue=1;assert(!tud_vendor_control_xfer_cb(0,CONTROL_STAGE_SETUP,&request));
+    request.wValue=0;request.bmRequestType=0x40;
+    assert(!tud_vendor_control_xfer_cb(0,CONTROL_STAGE_SETUP,&request));
+    request.wIndex=4;assert(!tud_vendor_control_xfer_cb(0,CONTROL_STAGE_SETUP,&request));
+
+    for (unsigned mode = 0; mode < 2; mode++) {
+        bool ecm = mode == 0;
+        const uint8_t *config = tud_descriptor_configuration_cb(0);
+        unsigned total=read_le16(config+2), interfaces=0, endpoints=0, associations=0;
+        assert(config[4] == 2 && config[5] == 1);
+        assert(total == TUD_CONFIG_DESC_LEN + (ecm ? TUD_CDC_ECM_DESC_LEN : TUD_RNDIS_DESC_LEN));
+        unsigned pos=0;int interface=-1;
         while (pos < total) {
-            const uint8_t *d = config + pos;
-            assert(d[0] >= 2 && d[0] <= total - pos);
+            const uint8_t *d=config+pos;
+            assert(d[0] >= 2 && d[0] <= total-pos);
             if (d[1] == TUSB_DESC_INTERFACE) {
                 interfaces++;
+                assert(d[2] == interface || d[2] == interface+1);interface=d[2];
                 if (d[2] == 0) {
-                    assert(d[5] == (i ? TUSB_CLASS_CDC : TUD_RNDIS_ITF_CLASS));
-                    assert(d[6] ==
-                           (i ? CDC_COMM_SUBCLASS_ETHERNET_CONTROL_MODEL : TUD_RNDIS_ITF_SUBCLASS));
+                    assert(d[5] == (ecm ? TUSB_CLASS_CDC : TUD_RNDIS_ITF_CLASS));
+                    assert(d[6] == (ecm ? CDC_COMM_SUBCLASS_ETHERNET_CONTROL_MODEL : TUD_RNDIS_ITF_SUBCLASS));
                 }
+            }
+            if (d[1] == TUSB_DESC_INTERFACE_ASSOCIATION) {
+                assert(d[2] == associations*2 && d[3] == 2);associations++;
             }
             if (d[1] == TUSB_DESC_ENDPOINT) {
                 endpoints++;
-                assert(d[2] == 0x81 || d[2] == 0x82 || d[2] == 0x02);
-                assert(read_le16(d + 4) == (d[2] == 0x81 && !i ? 8 : 64));
+                assert(read_le16(d+4) == (d[2] == 0x81 && !ecm ? 8 : 64));
+                assert(d[2] == 0x81 || d[2] == 0x02 || d[2] == 0x82);
             }
-            pos += d[0];
+            pos+=d[0];
         }
-        assert(pos == total && interfaces == (i ? 3 : 2) && endpoints == 3);
+        assert(pos == total && interfaces == (ecm ? 3 : 2) && endpoints == 3);
+        assert(associations == 1 && interface == 1);
+        assert(!tud_descriptor_configuration_cb(1) && !tud_descriptor_configuration_cb(255));
+        if (ecm) {
+            request=(tusb_control_request_t){.bmRequestType=0x40,.bRequest=0x20,.wIndex=8,.wValue=0x0100};
+            request.wLength=1;assert(!tud_vendor_control_xfer_cb(0,CONTROL_STAGE_SETUP,&request));
+            request.wLength=0;request.wValue=1;assert(!tud_vendor_control_xfer_cb(0,CONTROL_STAGE_SETUP,&request));
+            request.wValue=0x0100;mounted=true;
+            assert(!tud_vendor_control_xfer_cb(0,CONTROL_STAGE_SETUP,&request));mounted=false;
+            assert(tud_vendor_control_xfer_cb(0,CONTROL_STAGE_SETUP,&request) && acknowledgements == 1);
+            assert(tud_descriptor_configuration_cb(0) == config);
+            assert(tud_vendor_control_xfer_cb(0,CONTROL_STAGE_ACK,&request));
+        }
     }
-    assert(!tud_descriptor_configuration_cb(2));
-    assert(!tud_descriptor_configuration_cb(255));
-    const uint16_t *os = tud_descriptor_string_cb(0xee, 0);
-    assert(os[0] == 0x0312 && os[1] == 'M' && os[7] == '0' && os[8] == 0x20);
-    assert(!tud_descriptor_string_cb(6, 0));
-    tusb_control_request_t request = {
-        .bmRequestType = 0xc0, .bRequest = 0x20, .wIndex = 4, .wLength = 40};
-    assert(tud_vendor_control_xfer_cb(0, CONTROL_STAGE_SETUP, &request));
-    assert(transfers == 1 && read_le32(compatible_id) == 40);
-    assert(read_le16(compatible_id + 4) == 0x0100);
-    assert(compatible_id[8] == 1 && compatible_id[16] == 0 && compatible_id[17] == 1);
-    assert(!memcmp(compatible_id + 18, "RNDIS\0\0\0", 8));
-    assert(!memcmp(compatible_id + 26, "5162001\0", 8));
-    assert(tud_vendor_control_xfer_cb(0, CONTROL_STAGE_ACK, &request) && transfers == 1);
-    request.bmRequestType = 0x40;
-    assert(!tud_vendor_control_xfer_cb(0, CONTROL_STAGE_SETUP, &request));
-    request.bmRequestType = 0xc0;
-    request.wIndex = 5;
-    assert(!tud_vendor_control_xfer_cb(0, CONTROL_STAGE_SETUP, &request));
+    tud_event_hook_cb(0,DCD_EVENT_BUS_RESET,true);
+    assert(tud_descriptor_configuration_cb(0)[TUD_CONFIG_DESC_LEN+8+6] == CDC_COMM_SUBCLASS_ETHERNET_CONTROL_MODEL);
+    assert(!tud_vendor_control_xfer_cb(0,CONTROL_STAGE_ACK,&request));
+    assert(tud_vendor_control_xfer_cb(0,CONTROL_STAGE_SETUP,&request));
+    tud_event_hook_cb(0,DCD_EVENT_BUS_RESET,true);
+    assert(!tud_vendor_control_xfer_cb(0,CONTROL_STAGE_ACK,&request));
+    accept_status=false;assert(!tud_vendor_control_xfer_cb(0,CONTROL_STAGE_SETUP,&request));
+    assert(!tud_vendor_control_xfer_cb(0,CONTROL_STAGE_ACK,&request));accept_status=true;
+    assert(tud_vendor_control_xfer_cb(0,CONTROL_STAGE_SETUP,&request));
+    assert(tud_descriptor_configuration_cb(0)[TUD_CONFIG_DESC_LEN+8+6] == CDC_COMM_SUBCLASS_ETHERNET_CONTROL_MODEL);
+    /* An abandoned status stage leaves the default descriptor and can retry. */
+    assert(tud_vendor_control_xfer_cb(0,CONTROL_STAGE_SETUP,&request));
+    assert(tud_vendor_control_xfer_cb(0,CONTROL_STAGE_ACK,&request));
+    tud_event_hook_cb(0,DCD_EVENT_UNPLUGGED,true);
+    assert(tud_descriptor_configuration_cb(0)[TUD_CONFIG_DESC_LEN+8+6] == CDC_COMM_SUBCLASS_ETHERNET_CONTROL_MODEL);
+    assert(!tud_descriptor_string_cb(6,0) && !tud_descriptor_string_cb(0xee,0));
 }
 
 static void prepare_message(uint32_t type, unsigned length) {

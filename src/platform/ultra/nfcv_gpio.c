@@ -17,6 +17,7 @@
 #endif
 #include "tag/phy/nfcv/timing.h"
 #include "tag/phy/nfcv/ppm.h"
+#include "tag/phy/nfcv/waveform.h"
 static bool enabled;
 #ifdef NFCV_DIAGNOSTICS
 #define RF_PHASE(n) (NRF_POWER->GPREGRET2 = (n))
@@ -29,16 +30,13 @@ static nfcv_reply_t response;
 static uint32_t tx_deadline_cycles, tx_fraction, tx_missed_half_periods, tx_max_lateness_cycles;
 static uint32_t gpio_mask;
 static uint32_t observed_eof_cycles;
-/* PM3 A/B/A/B: -0.5 us yielded 40/40 single reads and 10/10 multiple reads. */
+/* Diagnostic adjustment relative to the production response delay. */
 static int32_t tx_timing_adjustment_cycles = NFCV_TX_DEFAULT_ADJUSTMENT_CYCLES;
 /* Record last complete physical RX/TX, outside any USB work. */
 static uint8_t last_tx[ISO15693_RESPONSE_MAX_BYTES], last_rx[ISO15693_FRAME_MAX_BYTES];
 static unsigned last_tx_len, last_rx_len;
 static uint32_t edges[NFCV_RX_EDGE_CAPACITY], saved_edges[NFCV_RX_EDGE_CAPACITY];
 static unsigned edge_count, saved_edge_count;
-static uint8_t waveform[ISO15693_RESPONSE_MAX_BYTES * NFCV_WAVEFORM_SEGMENTS_PER_BYTE +
-                        NFCV_WAVEFORM_FRAMING_CAPACITY];
-static unsigned waveform_len;
 static void sense(void) {
     NRF_NFCT->EVENTS_FIELDDETECTED = 0;
     NRF_NFCT->EVENTS_FIELDLOST = 0;
@@ -64,11 +62,22 @@ static void activate(void) {
 }
 /* Full subcarrier cycles; rational 75/76 CPU-cycle half periods. Each symbol
    uses an integer number of cycles, so no final half-cycle gets cut short. */
-NFCV_RAM_FUNCTION static bool transmit_waveform(void) {
+NFCV_RAM_FUNCTION static bool transmit_waveform(unsigned rate) {
     uint32_t next = tx_deadline_cycles, phase = tx_fraction, missed = 0, worst = 0;
-    for (unsigned s = 0; s < waveform_len; s++) {
-        unsigned count = (waveform[s] & NFCV_WAVEFORM_CYCLE_MASK) * 2u;
-        bool on = (waveform[s] & NFCV_WAVEFORM_CARRIER_FLAG) != 0;
+    unsigned segments =
+        last_tx_len * NFCV_WAVEFORM_SEGMENTS_PER_BYTE + NFCV_WAVEFORM_FRAMING_SEGMENTS;
+    for (unsigned s = 0; s < segments; s++) {
+        uint8_t segment = nfcv_waveform_segment(last_tx, last_tx_len, s, rate);
+        unsigned count = (segment & NFCV_WAVEFORM_CYCLE_MASK) * 2u;
+        bool on = (segment & NFCV_WAVEFORM_CARRIER_FLAG) != 0;
+        /* Keep contiguous carrier segments in one timed edge loop. */
+        while (on && s + 1u < segments) {
+            uint8_t following = nfcv_waveform_segment(last_tx, last_tx_len, s + 1u, rate);
+            if (!(following & NFCV_WAVEFORM_CARRIER_FLAG))
+                break;
+            count += (following & NFCV_WAVEFORM_CYCLE_MASK) * 2u;
+            s++;
+        }
         if (!on) {
             /* Every carrier cycle ends high. Silence needs no repeated writes;
                advance the same rational schedule and prepare the next edge early. */
@@ -95,6 +104,7 @@ NFCV_RAM_FUNCTION static bool transmit_waveform(void) {
                 phase -= NFCV_TX_HALF_PERIOD_DENOMINATOR;
                 next++;
             }
+            next += (h & 1u) ? -NFCV_TX_LOW_HALF_BIAS_CYCLES : NFCV_TX_LOW_HALF_BIAS_CYCLES;
         }
     }
     tx_deadline_cycles = next;
@@ -103,11 +113,6 @@ NFCV_RAM_FUNCTION static bool transmit_waveform(void) {
     tx_max_lateness_cycles = worst;
     return true;
 }
-/* Keep waveform preparation in the RAM caller: flash veneers per segment
-   otherwise push multi-block replies beyond the existing response deadline. */
-static inline __attribute__((always_inline)) void add_segment(unsigned cycles, bool on) {
-    waveform[waveform_len++] = (uint8_t)cycles | (on ? NFCV_WAVEFORM_CARRIER_FLAG : 0u);
-}
 NFCV_RAM_FUNCTION static void send_response(void) {
     if (!response.len || response.len > sizeof(last_tx) - ISO15693_CRC_SIZE)
         return;
@@ -115,25 +120,9 @@ NFCV_RAM_FUNCTION static void send_response(void) {
     iso15693_append_crc(last_tx, response.len);
     last_tx_len = response.len + ISO15693_CRC_SIZE;
     unsigned rate = nfcv_session_high_response_rate() ? 1u : NFCV_TX_LOW_RATE_MULTIPLIER;
-    waveform_len = 0;
-    add_segment(NFCV_TX_LONG_SEGMENT_CYCLES * rate, false);
-    add_segment(NFCV_TX_LONG_SEGMENT_CYCLES * rate, true);
-    add_segment(NFCV_TX_BIT_HALF_CYCLES * rate, false);
-    add_segment(NFCV_TX_BIT_HALF_CYCLES * rate, true);
-    for (unsigned i = 0; i < last_tx_len; i++)
-        for (unsigned b = 0; b < 8; b++) {
-            bool one = (last_tx[i] >> b) & 1u;
-            add_segment(NFCV_TX_BIT_HALF_CYCLES * rate, !one);
-            add_segment(NFCV_TX_BIT_HALF_CYCLES * rate, one);
-        }
-    add_segment(NFCV_TX_BIT_HALF_CYCLES * rate, true);
-    add_segment(NFCV_TX_BIT_HALF_CYCLES * rate, false);
-    add_segment(NFCV_TX_LONG_SEGMENT_CYCLES * rate, true);
-    add_segment(NFCV_TX_LONG_SEGMENT_CYCLES * rate, false);
-    NRF_NFCT->TASKS_DISABLE = 1;
-    __DSB();
-    uint32_t when = observed_eof_cycles + NFCV_TX_EOF_REFERENCE_OFFSET_CYCLES +
-                    NFCV_TX_RESPONSE_WAIT_CYCLES + (uint32_t)tx_timing_adjustment_cycles;
+    /* Keep the detector active: ACTIVATE calibration would miss the next SOF. */
+    uint32_t when = observed_eof_cycles + NFCV_TX_RESPONSE_WAIT_CYCLES +
+                    (uint32_t)tx_timing_adjustment_cycles;
     if ((int32_t)(DWT->CYCCNT - when) > 0)
         stats[NFCV_STAT_TX_LATE_START]++;
     while ((int32_t)(DWT->CYCCNT - when) < 0) {
@@ -141,7 +130,7 @@ NFCV_RAM_FUNCTION static void send_response(void) {
     tx_deadline_cycles = DWT->CYCCNT;
     tx_fraction = 0;
     tx_missed_half_periods = tx_max_lateness_cycles = 0;
-    if (!transmit_waveform()) {
+    if (!transmit_waveform(rate)) {
         return;
     }
     while ((int32_t)(DWT->CYCCNT - tx_deadline_cycles) < 0) {
@@ -156,9 +145,6 @@ NFCV_RAM_FUNCTION static void send_response(void) {
     stats[NFCV_STAT_TX_END_CYCLES] = DWT->CYCCNT;
     stats[NFCV_STAT_TX_END_TAG_STATE] = NRF_NFCT->NFCTAGSTATE;
     stats[NFCV_STAT_TX_END_FIELD] = NRF_NFCT->FIELDPRESENT;
-#endif
-    activate();
-#ifdef NFCV_DIAGNOSTICS
     stats[NFCV_STAT_TX_RETURN_CYCLES] = DWT->CYCCNT - stats[NFCV_STAT_TX_END_CYCLES];
     stats[NFCV_STAT_TX_RETURN_FIELD] = NRF_NFCT->FIELDPRESENT;
 #endif
@@ -351,7 +337,7 @@ bool nfcv_phy_start(void) {
         }
     }
     nrf_gpio_cfg(HF_ANT_SEL, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT,
-                 NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_H0H1, NRF_GPIO_PIN_NOSENSE);
+                 NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE);
     nrf_gpio_pin_set(HF_ANT_SEL);
     gpio_mask = 1u << (HF_ANT_SEL & 31u);
     NRF_NFCT->INTENCLR = 0xffffffffu;

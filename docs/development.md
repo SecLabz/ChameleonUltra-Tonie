@@ -46,11 +46,10 @@ Embedded gzip page → /api/v1 → application/library
                              → NFC-V session → SLIX engine → GPIO PHY
 ```
 
-TinyUSB supplies two mutually exclusive USB configurations: RNDIS first for
-Windows, CDC-ECM second for ECM hosts. Both share endpoints and the same lwIP
-interface, DHCP server, HTTP API, and address. Microsoft OS 1.0 descriptors
-advertise the built-in RNDIS driver. The application PID is `cafe:4061` (formerly
-ECM-only `cafe:4060`) to avoid reusing cached driver bindings; the DFU identity
+TinyUSB defaults to CDC-ECM. Windows 10/11 can request RNDIS through Microsoft
+OS 2.0 alternate enumeration before configuration. Both profiles share endpoints
+and the same lwIP interface, DHCP server, HTTP API, and address. The application
+PID is `cafe:4062` to avoid cached driver bindings from earlier layouts; DFU
 is unchanged. The RNDIS handler is adapted from TinyUSB's pinned implementation, checks
 request lengths against its 120-byte buffer, and reports the same host adapter
 MAC as the ECM descriptor. The lwIP device MAC differs in its final bit.
@@ -66,9 +65,9 @@ a working signed application package available when testing USB changes.
 
 RNDIS DHCP, HTTP, and DFU entry were validated on Linux with `rndis_host`;
 web access on Windows 11 was reported working with `v0.1.0-ecm-rndis.2`.
-Windows 10, the new layout's ECM configuration, and iPhone still need hardware
-validation. In a VM, attach the application (`cafe:4061`) or DFU (`1915:521f`)
-to the intended OS; Windows cannot use an adapter passed through to Linux.
+These results predate alternate enumeration. The new layout still needs
+hardware validation on Windows 10/11, Linux, and iPhone. In a VM, attach the
+application (`cafe:4062`) or DFU (`1915:521f`) to the intended OS; Windows cannot use an adapter passed through to Linux.
 
 lwIP uses raw TCP. The page, fonts, and notices are
 local; gzip is served directly from flash. Keep the unauthenticated
@@ -131,10 +130,10 @@ Keep the [NFC-V mechanism](nfcv.md) and the established timing in
 [timing definitions](../src/tag/phy/nfcv/timing.h), and
 [PPM macros](../src/tag/phy/nfcv/ppm.h):
 
-- Preserve detector thresholds, integer arithmetic, polling order, and RX/TX lifecycle.
-- RX, TX, and waveform preparation run from RAM with interrupts masked in bounded RF windows. Keep preparation inline in its RAM caller; USB runs between windows.
-- Schedule 423.75 kHz with rational 75/76-cycle half-period deadlines at 64 MHz. Sample lateness after GPIO writes. Active segments end high; finish the last interval before restoring the switch and NFCT.
-- Waveform start is detector EOF + `604 + 20540 - 32 = 21112` cycles (329.875 µs). The initial 24 inactive subcarrier cycles add about 56.64 µs before the first high-rate burst. These are not independent antenna-edge measurements.
+- Preserve detector thresholds, integer arithmetic and polling order. Keep the detector active across replies to avoid post-TX recalibration.
+- RX and TX run from RAM with interrupts masked in bounded RF windows. Derive waveform segments inline in the RAM caller; USB runs between windows.
+- Schedule 423.75 kHz with rational 75/76-cycle half-period deadlines at 64 MHz and paired +8/−8-cycle offsets for low/high halves. Sample lateness after GPIO writes. Active segments end high; finish the last interval before restoring the switch.
+- Waveform start is detector EOF + `20508` cycles (320.4375 µs). The initial 24 inactive subcarrier cycles add about 56.64 µs before the first high-rate burst. These are not independent antenna-edge measurements.
 - PPM expressions expand in the receiver; macro arguments must be scalars without side effects. Even forced-inline function extraction changed register allocation with the validated compiler.
 
 Inspect generated instructions for timing-path changes. Local tests/counters

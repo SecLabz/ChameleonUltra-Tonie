@@ -58,9 +58,11 @@ For other bootloaders, later updates, or the `nrfutil` fallback, see
 
 With ChameleonUltra-Tonie installed, connect the Ultra to your iPhone, PC, or
 another device using a USB data cable and an adapter if needed. The device must
-support USB Ethernet. The firmware offers RNDIS for Windows 10/11 and CDC-ECM
-for Linux and other ECM hosts. RNDIS web access has been tested on Linux and
-Windows 11; Windows 10 and iPhone still need hardware validation. Open **[192.168.7.1](http://192.168.7.1)** in its browser. Import your `.nfc` files, assign a
+support USB Ethernet. The firmware defaults to CDC-ECM and offers RNDIS through
+alternate enumeration for Windows 10/11. Earlier RNDIS firmware was tested on
+Linux and Windows 11; the alternate enumeration layout still needs hardware
+validation. Open **[192.168.7.1](http://192.168.7.1)** in its browser.
+Import your `.nfc` files, assign a
 favorite, then press **Play** to enable tag emulation. “Now playing” refers to
 emulation; the Ultra does not store or play audio.
 

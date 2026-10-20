@@ -1,6 +1,8 @@
 #include "tag/phy/nfcv/ppm.h"
 #include <assert.h>
 #include <stdio.h>
+#include "tag/phy/nfcv/waveform.h"
+#include "tag/protocol/nfcv/frame.h"
 
 static void coding_positions(bool coding_1_of_256, unsigned symbol_count, unsigned positions) {
     for (unsigned symbol = 1; symbol <= symbol_count; symbol++) {
@@ -17,7 +19,50 @@ static void coding_positions(bool coding_1_of_256, unsigned symbol_count, unsign
     }
 }
 
+static void waveform(const uint8_t *bytes, unsigned length, unsigned rate) {
+    uint8_t expected[ISO15693_RESPONSE_MAX_BYTES * 16u + 8u];
+    unsigned count = 0;
+    expected[count++] = 24 * rate;
+    expected[count++] = 128 | (24 * rate);
+    expected[count++] = 8 * rate;
+    expected[count++] = 128 | (8 * rate);
+    for (unsigned i = 0; i < length; i++) {
+        for (unsigned bit = 0; bit < 8; bit++) {
+            bool one = (bytes[i] >> bit) & 1u;
+            expected[count++] = (8 * rate) | (one ? 0 : 128);
+            expected[count++] = (8 * rate) | (one ? 128 : 0);
+        }
+    }
+    expected[count++] = 128 | (8 * rate);
+    expected[count++] = 8 * rate;
+    expected[count++] = 128 | (24 * rate);
+    expected[count++] = 24 * rate;
+    assert(count == length * NFCV_WAVEFORM_SEGMENTS_PER_BYTE + NFCV_WAVEFORM_FRAMING_SEGMENTS);
+    for (unsigned segment = 0; segment < count; segment++)
+        assert(nfcv_waveform_segment(bytes, length, segment, rate) == expected[segment]);
+}
+
+static void waveforms(void) {
+    uint8_t bytes[ISO15693_RESPONSE_MAX_BYTES];
+    for (unsigned rate = 1; rate <= 4; rate += 3) {
+        for (unsigned first = 0; first < 256; first++) {
+            bytes[0] = first;
+            waveform(bytes, 1, rate);
+            for (unsigned second = 0; second < 256; second++) {
+                bytes[1] = second;
+                waveform(bytes, 2, rate);
+            }
+        }
+        for (unsigned pattern = 0; pattern < 4; pattern++) {
+            for (unsigned i = 0; i < sizeof(bytes); i++)
+                bytes[i] = pattern < 2 ? (pattern ? 0xff : 0) : pattern == 2 ? i : (i & 1 ? 0xaa : 0x55);
+            waveform(bytes, sizeof(bytes), rate);
+        }
+    }
+}
+
 int main(void) {
+    waveforms();
     coding_positions(false, 256, 4);
     coding_positions(true, 64, 256);
     assert(NFCV_PPM_MAX_SYMBOLS(false) == 256 && NFCV_PPM_MAX_SYMBOLS(true) == 64);

@@ -47,13 +47,14 @@
 #define NFCV_WAVEFORM_CYCLE_MASK 127u
 #define NFCV_WAVEFORM_CARRIER_FLAG 128u
 #define NFCV_WAVEFORM_SEGMENTS_PER_BYTE 16u
-#define NFCV_WAVEFORM_FRAMING_CAPACITY 9u
+#define NFCV_WAVEFORM_FRAMING_SEGMENTS 8u
 
-/* Retain both inherited response-delay terms and the measured correction.
- * These schedule waveform start; the first segment is inactive. */
-#define NFCV_TX_EOF_REFERENCE_OFFSET_CYCLES 604u
-#define NFCV_TX_RESPONSE_WAIT_CYCLES 20540u
-#define NFCV_TX_UNADJUSTED_DELAY_CYCLES 21144
-#define NFCV_TX_DEFAULT_ADJUSTMENT_CYCLES (-32)
-#define NFCV_TX_TEST_DELAY_MIN_CYCLES 21016u
-#define NFCV_TX_TEST_DELAY_MAX_CYCLES 21272u
+/* Detector timestamp to SOF start at 64 MHz. SOF begins with silence. */
+#define NFCV_TX_RESPONSE_WAIT_CYCLES 20508u
+#define NFCV_TX_UNADJUSTED_DELAY_CYCLES 20508
+#define NFCV_TX_DEFAULT_ADJUSTMENT_CYCLES 0
+#define NFCV_TX_TEST_DELAY_MIN_CYCLES 20412u
+#define NFCV_TX_TEST_DELAY_MAX_CYCLES 20668u
+
+/* Paired offsets preserve the carrier period while lengthening its low half. */
+#define NFCV_TX_LOW_HALF_BIAS_CYCLES 8

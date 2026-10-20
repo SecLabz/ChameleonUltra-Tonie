@@ -26,13 +26,17 @@ caused by the tag, while the Ultra generates no reader field of its own.
 
 Switching at 423.75 kHz creates a single subcarrier. Software turns that
 switching on and off to encode the response, including framing and CRC, at the
-requested high or low rate. NFCT is disabled during transmission; the reply
-uses the physical switch rather than hidden NFCT modulation registers.
+requested high or low rate. NFCT stays active during transmission to avoid
+recalibration before the next command; the reply uses the physical switch
+rather than hidden NFCT modulation registers.
 
 Timing is the difficult part. Critical code runs from RAM with interrupts masked
 during the RF window. At 64 MHz, software alternates 75- and 76-cycle switch
-intervals to approximate the subcarrier without accumulating rounding drift.
-It then restores the switch and reactivates NFCT for the next command. This
+intervals to approximate the subcarrier without accumulating rounding drift,
+with paired +8/−8-cycle offsets to lengthen the low half of each period.
+Response segments are derived directly from the frame, avoiding an expanded
+waveform buffer, and adjacent carrier segments share one edge loop.
+After transmission it restores the switch for the next command. This
 relies on the Ultra's antenna circuit; another nRF52840 board would need its
 own suitable physical load-modulation path.
 
