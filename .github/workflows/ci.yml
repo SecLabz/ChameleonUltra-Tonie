@@ -131,7 +131,13 @@ jobs:
           set -euo pipefail
           package="release/ChameleonUltra-Tonie-$RELEASE_TAG-dfu.zip"
           python3 tools/release.py verify --version "$RELEASE_TAG" --package "$package"
-          cat > release-notes.md <<'NOTES'
+          awk -v heading="## $RELEASE_TAG" '
+            $0 == heading { section = 1; next }
+            section && /^## / { exit }
+            section { print }
+          ' CHANGELOG.md > release-notes.md
+          cat >> release-notes.md <<'NOTES'
+
           Download the signed application-only DFU ZIP for Chameleon Ultra and install it through the existing Nordic DFU bootloader. The embedded UI reports the release tag as the firmware version.
 
           Flash the downloaded DFU ZIP with the [Chameleon Ultra web flasher](https://taichunmin.idv.tw/chameleon-ultra.js/dfu.html).
@@ -145,4 +151,4 @@ jobs:
             flags=(--prerelease --latest=false)
           fi
           gh release create "$RELEASE_TAG" "$package" --verify-tag \
-            --title "$RELEASE_TAG" --generate-notes --notes-file release-notes.md "${flags[@]}"
+            --title "$RELEASE_TAG" --notes-file release-notes.md "${flags[@]}"
