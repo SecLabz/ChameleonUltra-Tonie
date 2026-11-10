@@ -1,4 +1,5 @@
 #include "tag/nfcv_emulation.h"
+#include "tag/nfcv_reader.h"
 #include "common/bytes.h"
 /* Application failure-state checks for SLIX-L. */
 #include "core/app.h"
@@ -67,6 +68,14 @@ bool nfcv_emulation_field_present(void) {
     return field;
 }
 
+static tag_image_t scan_target;
+
+operation_result_t nfcv_reader_scan(tag_image_t *out) {
+    assert(!rf);
+    *out = scan_target;
+    return RESULT_OK;
+}
+
 void platform_show_selection(const uint32_t f[FAVORITE_SLOT_COUNT], uint32_t id) {
     (void)f;
     led_selected = id;
@@ -108,7 +117,9 @@ int main(void) {
     assert(app_start_emulation(id) == RESULT_INVALID_DATA);
     assert(!app_state.emulating && !rf && led_selected == id);
     assert(app_start_emulation(id) == RESULT_OK);
-    assert(!memcmp(app_state.loaded_original.bytes, im.bytes, im.size));
+    tag_image_t emulation = im;
+    tag_image_prepare_emulation(&emulation);
+    assert(!memcmp(app_state.loaded_image.bytes, emulation.bytes, im.size));
     uint32_t id2;
     tag_image_t second = im;
     second.bytes[TAG_IMAGE_HEADER_SIZE] = 0x42;
@@ -120,18 +131,29 @@ int main(void) {
     assert(loads == before + 1 && app_state.library.selected == id2);
     assert(app_state.selected == id2 && !app_state.emulating && !rf && led_selected == id2);
     assert(app_start_emulation(id2) == RESULT_OK && app_state.emulating && rf);
-    assert(!memcmp(app_state.loaded_original.bytes, second.bytes, second.size));
+    emulation.bytes[TAG_IMAGE_HEADER_SIZE] = 0x42;
+    assert(!memcmp(app_state.loaded_image.bytes, emulation.bytes, second.size));
     write_fails = true;
     before = loads;
     assert(app_start_emulation(id) == RESULT_STORAGE_ERROR);
     assert(loads == before + 1 && app_state.library.selected == id2);
     assert(app_state.selected == id && app_state.emulating && rf && led_selected == id);
-    assert(!memcmp(app_state.loaded_original.bytes, im.bytes, im.size));
+    emulation.bytes[TAG_IMAGE_HEADER_SIZE] = im.bytes[TAG_IMAGE_HEADER_SIZE];
+    assert(!memcmp(app_state.loaded_image.bytes, emulation.bytes, im.size));
     write_fails = false;
     before = loads;
     app_pause_emulation();
     assert(!app_state.emulating && !rf && led_selected == id && loads == before);
     assert(app_start_emulation(id) == RESULT_OK && rf && led_selected == id);
+    assert(app_start_emulation(id2) == RESULT_OK);
+    scan_target = im;
+    tag_image_t scanned;
+    field = true;
+    assert(app_scan_tag(&scanned) == RESULT_RF_BUSY);
+    assert(app_state.emulating && rf);
+    field = false;
+    assert(app_scan_tag(&scanned) == RESULT_OK);
+    assert(!app_state.emulating && !rf && !memcmp(scanned.bytes, im.bytes, im.size));
     assert(app_start_emulation(id2) == RESULT_OK);
     /* Reset owns its RF guard and never erases during an active reader field. */
     field = true;

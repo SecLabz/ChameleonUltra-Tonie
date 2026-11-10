@@ -6,6 +6,7 @@ typedef enum {
     RESULT_NOT_FOUND,
     RESULT_LIBRARY_FULL,
     RESULT_STORAGE_ERROR,
-    RESULT_RF_BUSY
+    RESULT_RF_BUSY,
+    RESULT_NO_TAG
 } operation_result_t;
 const char *operation_result_name(operation_result_t result);

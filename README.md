@@ -15,7 +15,7 @@ the buttons.
 
 ## Features
 
-- Import Flipper SLIX/SLIX-L `.nfc` files and manage up to 64 tags through the web interface.
+- Scan a physical Tonie or import Flipper SLIX/SLIX-L `.nfc` files. Store up to 64 tags.
 - Assign favorites and switch between them with the A/B buttons.
 - Open the offline web interface over USB Ethernet, with no companion app.
 
@@ -25,7 +25,7 @@ https://github.com/user-attachments/assets/14ebd63d-b2e0-49a1-87a2-8f7c22ec95e9
 
 |                                                                                     Favorites                                                                                      |                                                                                Library                                                                                |                                                                                     Device                                                                                      |
 | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-| <a href="docs/media/readme/web-favorites.webp"><img src="docs/media/readme/web-favorites.webp" alt="Favorites with an active tag and eight color-coded shortcuts" width="230"></a> | <a href="docs/media/readme/web-library.webp"><img src="docs/media/readme/web-library.webp" alt="Tag library with search, import, and synthetic UIDs" width="230"></a> | <a href="docs/media/readme/web-device.webp"><img src="docs/media/readme/web-device.webp" alt="Device page with battery, button guide, and DFU update controls" width="230"></a> |
+| <a href="docs/media/readme/web-favorites.webp"><img src="docs/media/readme/web-favorites.webp" alt="Favorites with an active tag and eight color-coded shortcuts" width="230"></a> | <a href="docs/media/readme/web-library.webp"><img src="docs/media/readme/web-library.webp" alt="Tag library with Scan, Import, Export all, and search" width="230"></a> | <a href="docs/media/readme/web-device.webp"><img src="docs/media/readme/web-device.webp" alt="Device page with battery, button guide, and DFU update controls" width="230"></a> |
 
 ## Install from the official Chameleon Ultra firmware
 
@@ -62,8 +62,7 @@ support USB Ethernet. The firmware defaults to CDC-ECM and offers RNDIS through
 alternate enumeration for Windows 10/11. Earlier RNDIS firmware was tested on
 Linux and Windows 11; the alternate enumeration layout still needs hardware
 validation. Open **[192.168.7.1](http://192.168.7.1)** in its browser.
-Import your `.nfc` files, assign a
-favorite, then press **Play** to enable tag emulation. “Now playing” refers to
+Add a tag, assign a favorite, then press **Play** to enable tag emulation. “Now playing” refers to
 emulation; the Ultra does not store or play audio.
 
 The web interface works offline and requires no companion app. If the page
@@ -72,11 +71,15 @@ power, and Safari still need hardware validation.
 
 ## Your collection
 
-- Import `.nfc` files, assign favorites, and use **Play/Pause**.
+- To add a Tonie, open **Library → Scan**, hold it against the Ultra, then name and save it.
+  Scanning is experimental and pauses playback.
+- Use **Import** to add `.nfc` files.
 - Switch favorites with A/B; hold A to check the battery.
+- Use **Export emulation .nfc** in a tag's menu to download its Flipper SLIX emulation file.
+  SLIX-L tags start with privacy off and the default SLIX privacy and destroy passwords.
 - Use **Export all** to back up your tags; favorites are not included.
 
-Reader writes are never saved automatically. Reloading restores the original.
+Reader writes are never saved automatically. Reloading restores the initial emulation state.
 Hardware controls and power behavior still need validation.
 
 ## NFC-V implementation
@@ -85,10 +88,8 @@ The nRF52840 has no native NFC-V tag controller. This firmware decodes commands
 in software and sends replies through the Ultra's physical `HF_ANT_SEL` antenna
 switch on the unmodified board.
 
-The project focuses on SLIX-L emulation on the Ultra. It has no BLE,
-physical tag reading, additional tag families, RTOS, or frontend framework.
-Reader compatibility is experimental; an accepted response from one reader
-cannot establish compatibility with another.
+The project focuses on SLIX-L emulation and Tonie import on the Ultra.
+Emulation compatibility varies by reader.
 
 [How NFC-V works on the Ultra →](docs/nfcv.md)
 

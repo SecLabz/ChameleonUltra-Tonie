@@ -58,14 +58,22 @@ with tempfile.TemporaryDirectory() as d:
         assert request("POST", "/api/v1/test-rf-delay?cycles=21112")[0].status == 400
         data = (root / "build/test-slix.nfci").read_bytes()
         h = {"Content-Type": "application/octet-stream"}
+        r, scanned = request("POST", "/api/v1/scan", headers=h)
+        assert r.status == 200 and scanned[:4] == b"NFCI", scanned
+        assert request("POST", "/api/v1/scan", b"bad", h)[0].status == 400
         r, b = request("POST", "/api/v1/import?name=Synthetic", data, h)
         assert r.status == 200, b
         id = json.loads(b)["id"]
         assert request("GET", f"/api/v1/tag?id={id}")[1] == data
+        r, emulated = request("GET", f"/api/v1/tag?id={id}&emulation=1")
+        assert r.status == 200 and emulated[5] == 1 and emulated[7] == data[7] & ~1
+        assert emulated[8:68] == data[8:68] and emulated[88:] == data[88:]
+        assert emulated[68:88] == bytes(8) + b"\x0f" * 8 + bytes(4)
         for path in [f"favorite?slot=1&id={id}", f"emulate?id={id}"]:
             assert request("POST", "/api/v1/" + path, headers=h)[0].status == 200
         state = json.loads(request("GET", "/api/v1/state")[1])
-        assert state["active"] and state["favorites"][0] == id
+        assert state["active"] and state["profile"] == 1 and state["favorites"][0] == id
+        assert request("GET", f"/api/v1/tag?id={id}")[1] == data
         unsupported = bytearray(data)
         unsupported[5] = 3
         assert (

@@ -1,5 +1,8 @@
 #include "tag/phy/nfcv/phy.h"
 #include "tag/nfcv_emulation.h"
+#ifdef NFCV_SCAN_DIAGNOSTICS
+#include "tag/nfcv_reader.h"
+#endif
 #include "api.h"
 #include "firmware_version.h"
 #include "platform/platform.h"
@@ -114,6 +117,7 @@ static api_response_t api_result_response(operation_result_t r, json_writer_t *j
                        operation_result_name(r));
     return (api_response_t){r == RESULT_OK              ? 200
                             : r == RESULT_NOT_FOUND     ? 404
+                            : r == RESULT_NO_TAG        ? 404
                             : r == RESULT_RF_BUSY       ? 409
                             : r == RESULT_STORAGE_ERROR ? 503
                                                         : 400,
@@ -138,9 +142,9 @@ static api_response_t api_get_state(json_writer_t *json) {
     json_append_string(json, e ? e->name : "");
     json_append_format(
         json, ",\"profile\":%u,\"uid\":",
-        app_state.selected ? app_state.loaded_original.bytes[TAG_IMAGE_PROFILE_OFFSET] : 0);
+        app_state.selected ? app_state.loaded_image.bytes[TAG_IMAGE_PROFILE_OFFSET] : 0);
     if (app_state.selected)
-        json_append_image_uid(json, app_state.loaded_original.bytes);
+        json_append_image_uid(json, app_state.loaded_image.bytes);
     else
         json_append_format(json, "\"\"");
     json_append_format(json, ",\"favorites\":[");
@@ -175,8 +179,8 @@ static api_response_t api_get_tags(json_writer_t *json) {
     return api_json_response(json);
 }
 
-static api_response_t api_get_original(uint32_t id, uint8_t *out, size_t capacity,
-                                       json_writer_t *json) {
+static api_response_t api_get_tag(uint32_t id, bool emulation, uint8_t *out, size_t capacity,
+                                  json_writer_t *json) {
     operation_result_t r;
     tag_image_t im;
     if (!app_state.ready)
@@ -186,18 +190,36 @@ static api_response_t api_get_original(uint32_t id, uint8_t *out, size_t capacit
         return api_result_response(r, json);
     if (im.size > capacity)
         return api_result_response(RESULT_INVALID_DATA, json);
+    if (emulation)
+        tag_image_prepare_emulation(&im);
     memcpy(out, im.bytes, im.size);
     return (api_response_t){200, "application/octet-stream", im.size};
 }
 
 static api_response_t api_mutate(const char *path, const char *uri, const uint8_t *body,
-                                 size_t size, json_writer_t *json) {
+                                 size_t size, uint8_t *out, size_t capacity,
+                                 json_writer_t *json) {
     uint32_t id = 0, slot = 0;
     char name[TAG_NAME_MAX_BYTES + 1u];
     operation_result_t r = RESULT_INVALID_DATA;
     app_note_activity();
     if (!strcmp(path, "/api/v1/library-reset") && !size)
         return api_result_response(app_reset_library(platform_flash_io()), json);
+    if (!strcmp(path, "/api/v1/scan") && !size) {
+#ifdef NFCV_SCAN_DIAGNOSTICS
+        uint32_t extended, auth;
+        nfcv_reader_trace_configure(query_uint32(uri, "extended", &extended) && extended == 1u,
+                                    query_uint32(uri, "auth", &auth) && auth == 1u);
+#endif
+        tag_image_t im;
+        r = app_scan_tag(&im);
+        if (r != RESULT_OK)
+            return api_result_response(r, json);
+        if (im.size > capacity)
+            return api_result_response(RESULT_INVALID_DATA, json);
+        memcpy(out, im.bytes, im.size);
+        return (api_response_t){200, "application/octet-stream", im.size};
+    }
     if (!strcmp(path, "/api/v1/import") && query_parameter(uri, "name", name, sizeof(name)) &&
         size <= TAG_IMAGE_MAX_BYTES) {
         tag_image_t im;
@@ -297,15 +319,29 @@ api_response_t api_dispatch_request(const char *method, const char *uri, const u
         return diagnostic;
 #endif
     if (get) {
+#ifdef NFCV_SCAN_DIAGNOSTICS
+        if (!strcmp(path, "/api/v1/test-scan")) {
+            size_t count;
+            const nfcv_scan_trace_t *trace = nfcv_reader_trace(&count);
+            json_append_format(&json, "[");
+            for (size_t i = 0; i < count; i++)
+                json_append_format(&json, "%s[%u,%u,%u,%u,%u]", i ? "," : "", trace[i].command,
+                                   trace[i].response_bytes, trace[i].response_error, trace[i].offset,
+                                   trace[i].capture_us);
+            json_append_format(&json, "]");
+            return api_json_response(&json);
+        }
+#endif
         if (!strcmp(path, "/api/v1/state"))
             return api_get_state(&json);
         if (!strcmp(path, "/api/v1/tags"))
             return api_get_tags(&json);
-        uint32_t id;
+        uint32_t id, emulation;
         if (!strcmp(path, "/api/v1/tag") && query_uint32(uri, "id", &id))
-            return api_get_original(id, out, capacity, &json);
+            return api_get_tag(id, query_uint32(uri, "emulation", &emulation) && emulation == 1u,
+                               out, capacity, &json);
     } else if (post) {
-        return api_mutate(path, uri, body, size, &json);
+        return api_mutate(path, uri, body, size, out, capacity, &json);
     }
     return (api_response_t){404, "application/json", 0};
 }

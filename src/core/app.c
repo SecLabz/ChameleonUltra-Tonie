@@ -1,4 +1,5 @@
 #include "tag/nfcv_emulation.h"
+#include "tag/nfcv_reader.h"
 #include "app.h"
 #include "favorites.h"
 #include "platform/platform.h"
@@ -61,12 +62,13 @@ operation_result_t app_start_emulation(uint32_t id) {
         show_selection();
         return RESULT_INVALID_DATA;
     }
-    app_state.loaded_original = image;
+    tag_image_prepare_emulation(&image);
+    app_state.loaded_image = image;
     app_state.selected = id;
     /* Persist selection only, never the live RF image. */
     if (app_state.library.selected != id)
         result = tag_library_write_settings(&app_state.library, app_state.library.favorites, id);
-    app_state.emulating = nfcv_emulation_start_from_image(&app_state.loaded_original);
+    app_state.emulating = nfcv_emulation_start_from_image(&app_state.loaded_image);
     if (!app_state.emulating) {
         nfcv_emulation_stop();
         result = RESULT_INVALID_DATA;
@@ -109,6 +111,17 @@ operation_result_t app_import_tag(const char *name, const tag_image_t *image, ui
         snprintf(unique_name, sizeof(unique_name), "%.*s (%u)", (int)cut, name, i);
     }
     return tag_library_write_image(&app_state.library, 0, unique_name, image, id);
+}
+
+operation_result_t app_scan_tag(tag_image_t *out) {
+#ifndef NFCV_SCAN_DIAGNOSTICS
+    if (!app_state.ready)
+        return RESULT_STORAGE_ERROR;
+#endif
+    if (nfcv_emulation_field_present())
+        return RESULT_RF_BUSY;
+    app_pause_emulation();
+    return nfcv_reader_scan(out);
 }
 
 operation_result_t app_delete_tag(uint32_t id) {

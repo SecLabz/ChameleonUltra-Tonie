@@ -1,5 +1,10 @@
 #define _POSIX_C_SOURCE 200809L
+#include "cards/slix/tag.h"
+#include "common/bytes.h"
 #include "tag/nfcv_emulation.h"
+#include "tag/nfcv_reader.h"
+#include "tag/nfcv_session.h"
+#include "tag/profiles/nfcv/reply.h"
 #include "platform/platform.h"
 #include "core/app.h"
 #include "net/http.h"
@@ -63,6 +68,50 @@ void nfcv_emulation_stop(void) {}
 
 bool nfcv_emulation_field_present(void) {
     return false;
+}
+
+static tag_image_t sim_tag;
+
+void nfcv_reader_phy_open(void) {
+    memset(&sim_tag, 0, sizeof(sim_tag));
+    sim_tag.size = TAG_IMAGE_HEADER_SIZE + 32u + 8u;
+    memcpy(sim_tag.bytes, "NFCI", 4u);
+    sim_tag.bytes[TAG_IMAGE_VERSION_OFFSET] = TAG_IMAGE_VERSION;
+    sim_tag.bytes[TAG_IMAGE_PROFILE_OFFSET] = TAG_IMAGE_SLIX_L;
+    sim_tag.bytes[TAG_IMAGE_UID_SIZE_OFFSET] = TAG_IMAGE_UID_BYTES;
+    sim_tag.bytes[TAG_IMAGE_FLAGS_OFFSET] = TAG_IMAGE_FLAG_PRIVACY;
+    const uint8_t uid[8] = {0xe0u, 0x04u, 0x03u, 0x50u, 0x11u, 0x22u, 0x33u, 0x44u};
+    memcpy(sim_tag.bytes + TAG_IMAGE_UID_OFFSET, uid, 8u);
+    sim_tag.bytes[TAG_IMAGE_IC_REF_OFFSET] = 0x03u;
+    sim_tag.bytes[TAG_IMAGE_BLOCK_SIZE_OFFSET] = TAG_IMAGE_BLOCK_BYTES;
+    write_le16(sim_tag.bytes + TAG_IMAGE_BLOCK_COUNT_OFFSET, 8u);
+    write_le16(sim_tag.bytes + TAG_IMAGE_DATA_SIZE_OFFSET, 32u);
+    write_le16(sim_tag.bytes + TAG_IMAGE_LOCK_SIZE_OFFSET, 8u);
+    write_le32(sim_tag.bytes + TAG_IMAGE_PASSWORDS_OFFSET + 4u * SLIX_PASSWORD_TYPE_PRIVACY,
+               TONIE_PRIVACY_PASSWORD);
+    for (unsigned i = 0; i < 32u; i++)
+        sim_tag.bytes[TAG_IMAGE_HEADER_SIZE + i] = (uint8_t)(0xa0u + i);
+    nfcv_session_configure_from_image(&sim_tag);
+    nfcv_session_init();
+}
+
+void nfcv_reader_phy_close(void) {}
+
+size_t nfcv_reader_phy_exchange(const uint8_t *tx, size_t tx_len, uint8_t *rx, size_t rx_cap) {
+    if (tx_len > ISO15693_FRAME_MAX_BYTES)
+        return 0;
+    iso15693_frame_t frame = {.byte_count = (uint16_t)tx_len,
+                              .crc_ok = iso15693_check_crc(tx, (uint16_t)tx_len),
+                              .high_data_rate = true,
+                              .single_subcarrier = true};
+    memcpy(frame.bytes, tx, tx_len);
+    nfcv_reply_t reply;
+    if (!nfcv_session_handle_frame(&frame, &reply) ||
+        (size_t)reply.len + ISO15693_CRC_SIZE > rx_cap)
+        return 0;
+    memcpy(rx, reply.bytes, reply.len);
+    iso15693_append_crc(rx, reply.len);
+    return (size_t)reply.len + ISO15693_CRC_SIZE;
 }
 
 void platform_show_selection(const uint32_t f[FAVORITE_SLOT_COUNT], uint32_t s) {

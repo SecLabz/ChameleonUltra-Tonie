@@ -1,4 +1,4 @@
-import { importFlipper, exportFlipper, exportZip, safeName } from './formats.js';
+import { importFlipper, exportFlipper, exportZip, safeName, inspectImage } from './formats.js';
 const $ = (id) => document.getElementById(id),
   escape = (s) =>
     String(s).replace(
@@ -8,6 +8,8 @@ const $ = (id) => document.getElementById(id),
 let state = { favorites: Array(8).fill(0) },
   tags = [],
   busy = false,
+  scanAbort = null,
+  scannedBytes = null,
   refreshing = false,
   connected = false,
   manage = false,
@@ -44,9 +46,8 @@ function toast(text, error = false) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => ($('toast').hidden = true), error ? 8000 : 4000);
 }
-async function api(path, options = {}) {
-  const controller = new AbortController(),
-    timeout = setTimeout(() => controller.abort(), 8000);
+async function api(path, options = {}, controller = new AbortController()) {
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
     const response = await fetch('/api/v1/' + path, {
       cache: 'no-store',
@@ -58,7 +59,10 @@ async function api(path, options = {}) {
       try {
         data = await response.json();
       } catch {}
-      throw Error(message(data?.error || `Device returned HTTP ${response.status}`));
+      const code = data?.error;
+      throw Object.assign(Error(message(code || `Device returned HTTP ${response.status}`)), {
+        code,
+      });
     }
     return options.binary ? new Uint8Array(await response.arrayBuffer()) : await response.json();
   } catch (e) {
@@ -77,7 +81,7 @@ function post(path, body) {
   });
 }
 async function refresh() {
-  if (busy || refreshing || restarting) return;
+  if (busy || scanAbort || refreshing || restarting) return;
   refreshing = true;
   const started = revision;
   try {
@@ -101,7 +105,7 @@ async function refresh() {
     }
   } finally {
     refreshing = false;
-    if (started !== revision && !busy && !restarting) refresh();
+    if (started !== revision) refresh();
   }
 }
 async function action(fn, success) {
@@ -177,7 +181,7 @@ function renderActive() {
     : state.selected
       ? '<button class="primary" id="resume-last">▶ Play</button>'
       : !tags.length
-        ? '<button class="primary" id="first-import">＋ Import tags</button>'
+        ? '<button id="first-import">＋ Import tags</button><button class="primary" id="first-scan">＋ Scan tag</button>'
         : '';
   $('active-panel').innerHTML = `
     <article class="active-card">
@@ -253,7 +257,7 @@ function renderLibrary() {
     : `
     <div class="empty-state">
       <span>▤</span><h2>${tags.length ? 'No matching tags' : 'Your collection starts here'}</h2>
-      <p>${tags.length ? 'Try another name.' : 'Import SLIX and SLIX-L .nfc files from your phone.'}</p>
+      <p>${tags.length ? 'Try another name.' : 'Scan a Tonie or import a SLIX .nfc file.'}</p>
     </div>`;
 }
 
@@ -281,6 +285,7 @@ $('active-panel').addEventListener('click', (e) => {
   if (button.id === 'stop-active') return action(() => post('stop'), 'Paused.');
   if (button.id === 'resume-last')
     return action(() => post(`emulate?id=${state.selected}`), 'Playing.');
+  if (button.id === 'first-scan') return openScanDrawer();
   if (button.id === 'first-import') $('files').click();
 });
 $('live-strip').addEventListener('click', (e) => {
@@ -364,7 +369,7 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 async function exportTag(t) {
-  const b = await api(`tag?id=${t.id}`, { binary: true });
+  const b = await api(`tag?id=${t.id}&emulation=1`, { binary: true });
   download(new Blob([exportFlipper(b)], { type: 'text/plain' }), safeName(t.name) + '.nfc');
 }
 async function more(id) {
@@ -372,7 +377,7 @@ async function more(id) {
   const t = tags.find((t) => t.id === id);
   await modal(
     t.name,
-    `<button type="button" class="modal-option" id="tag-export">↓ Export original .nfc</button>
+    `<button type="button" class="modal-option" id="tag-export">↓ Export emulation .nfc</button>
     <button type="button" class="modal-option" id="tag-rename">Rename</button>
     <button type="button" class="modal-option danger" id="tag-delete">Delete from library</button>`,
     null,
@@ -385,7 +390,7 @@ document.addEventListener('click', async (e) => {
   const t = tags.find((t) => t.id === modalTagId);
   if (!t) return;
   await closeModal();
-  if (id === 'tag-export') action(() => exportTag(t), 'Original dump exported.');
+  if (id === 'tag-export') action(() => exportTag(t), 'Emulation file exported.');
   if (id === 'tag-rename') {
     if (
       await modal(
@@ -409,6 +414,67 @@ document.addEventListener('click', async (e) => {
     action(() => post(`delete?id=${t.id}`), 'Tag deleted.');
 });
 $('import-button').onclick = () => $('files').click();
+const scanDialog = $('scan-dialog');
+$('scan-button').onclick = openScanDrawer;
+$('scan-cancel').onclick = cancelScan;
+scanDialog.addEventListener('cancel', (e) => {
+  e.preventDefault();
+  cancelScan();
+});
+$('scan-form').onsubmit = (e) => {
+  e.preventDefault();
+  if (!scannedBytes) return;
+  const bytes = scannedBytes,
+    name = safeName($('scan-name').value);
+  closeScanDrawer();
+  return action(
+    () => post(`import?name=${encodeURIComponent(name)}`, bytes),
+    'Tag scanned and saved.',
+  );
+};
+function closeScanDrawer() {
+  scanAbort?.abort();
+  scanAbort = null;
+  scannedBytes = null;
+  scanDialog.close();
+}
+function cancelScan() {
+  closeScanDrawer();
+  return refresh();
+}
+async function openScanDrawer() {
+  if (busy || scanAbort || restarting) return;
+  const controller = (scanAbort = new AbortController());
+  revision++;
+  $('scan-title').textContent = 'Scan a tag';
+  $('scan-message').textContent = 'Hold a Tonie or SLIX tag against the Chameleon Ultra.';
+  $('scan-details').hidden = $('scan-save').hidden = true;
+  scanDialog.showModal();
+  while (scanAbort === controller) {
+    try {
+      const bytes = await api('scan', { method: 'POST', binary: true }, controller);
+      if (scanAbort !== controller) return;
+      const { uid, profile, privacy } = inspectImage(bytes);
+      scannedBytes = bytes;
+      $('scan-title').textContent = 'Tag detected';
+      $('scan-message').textContent = `${profile}${privacy ? ' · Privacy' : ''} · ${uid}`;
+      const name = $('scan-name');
+      name.value = `Tonie ${uid.slice(-6)}`;
+      $('scan-details').hidden = $('scan-save').hidden = false;
+      name.focus();
+      name.select();
+      return;
+    } catch (e) {
+      if (scanAbort !== controller) return;
+      if (e.code !== 'no-tag') {
+        cancelScan();
+        toast(e.message, true);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 180));
+    }
+  }
+}
 $('files').onchange = () => {
   const files = Array.from($('files').files);
   $('files').value = '';

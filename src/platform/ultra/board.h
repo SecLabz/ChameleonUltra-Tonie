@@ -11,3 +11,7 @@
 #define FIELD_LED 33u
 #define BATTERY_SENSE 4u
 #define BOARD_AUX_OUTPUT 45u
+#define HF_SPI_SELECT 38u
+#define HF_SPI_MISO 11u
+#define HF_SPI_MOSI 39u
+#define HF_SPI_SCK 36u

@@ -19,7 +19,9 @@ DATA = src/common/bytes.c src/common/crc32.c src/core/result.c \
 COMMON = $(DATA) src/core/app.c src/net/api.c
 PROTOCOL = $(wildcard src/tag/profiles/nfcv/*.c) \
            src/tag/protocol/nfcv/frame.c \
-           src/cards/slix/tag.c src/tag/nfcv_session.c
+           src/tag/protocol/nfcv/reader_codec.c \
+           src/cards/slix/tag.c src/tag/nfcv_session.c \
+           src/tag/nfcv_reader.c
 INCLUDES = -Isrc -Isrc/config -Ibuild
 BASEFLAGS = -std=c11 -Wall -Wextra -Os -ffunction-sections -fdata-sections
 SANITIZERS = -g -fsanitize=address,undefined
@@ -43,7 +45,8 @@ APP_SRC = $(COMMON) $(PROTOCOL) $(START) $(USB) $(LWIP_SRC) \
           $(SDK)/modules/nrfx/drivers/src/nrfx_nfct.c \
           $(SDK)/modules/nrfx/drivers/src/nrfx_timer.c \
           src/net/http.c src/net/network.c src/net/dhcp.c src/net/rndis.c \
-          src/platform/ultra/nfcv_gpio.c src/tag/nfcv_emulation.c src/platform/ultra/platform.c \
+          src/platform/ultra/nfcv_gpio.c src/platform/ultra/nfcv_reader_rc522.c \
+          src/tag/nfcv_emulation.c src/platform/ultra/platform.c \
           src/platform/ultra/usb.c src/platform/ultra/clock.c src/platform/ultra/flash.c \
           src/platform/ultra/battery.c src/platform/ultra/controls.c src/platform/ultra/power.c src/main.c
 
@@ -63,7 +66,7 @@ web: version
 
 host: web
 	$(HOST_CC) $(BASEFLAGS) $(INCLUDES) -DPLATFORM_HOST \
-		$(COMMON) src/net/http.c src/host/main.c -o build/tonie-host
+		$(COMMON) $(PROTOCOL) src/net/http.c src/host/main.c -o build/tonie-host
 
 # Local tests use simulated RF/flash and never connect to USB hardware.
 test: test-core test-phy test-controls test-app test-dhcp test-usb test-web test-http-parser test-http test-tools
@@ -74,7 +77,9 @@ test-core: | build
 	UBSAN_OPTIONS=halt_on_error=1 build/test-core
 
 test-phy: | build
-	$(HOST_CC) $(BASEFLAGS) $(INCLUDES) $(SANITIZERS) tests/nfcv_ppm.c -o build/test-nfcv-ppm
+	$(HOST_CC) $(BASEFLAGS) $(INCLUDES) $(SANITIZERS) \
+		src/tag/protocol/nfcv/frame.c src/tag/protocol/nfcv/reader_codec.c \
+		tests/nfcv_ppm.c -o build/test-nfcv-ppm
 	UBSAN_OPTIONS=halt_on_error=1 build/test-nfcv-ppm
 
 test-controls: | build

@@ -32,7 +32,8 @@ build/tonie-host build/demo-library.bin
 ```
 
 Open [127.0.0.1:8080](http://127.0.0.1:8080); stop with Ctrl-C.
-RF/flash are simulated, battery is fixed at 83%, and DFU only logs a message.
+RF/flash are simulated, Scan reads a Tonie, battery is fixed at 83%,
+and DFU only logs a message.
 Reusing the file preserves the collection, but `make clean` deletes `build/`.
 Keep real backups, recovery packages, keys, and RF captures outside it;
 ignored `private/` survives clean. Only one simulator can use port 8080.
@@ -44,6 +45,7 @@ The main loop owns USB/network processing, flash mutations, and profile changes:
 ```text
 Embedded gzip page → /api/v1 → application/library
                              → NFC-V session → SLIX engine → GPIO PHY
+                             → Tonie scan → RC522 PHY
 ```
 
 TinyUSB defaults to CDC-ECM. Windows 10/11 can request RNDIS through Microsoft
@@ -92,22 +94,26 @@ ID high-water mark. Recovery stops at a torn tail and rejects corrupt committed
 headers or incompatible formats without automatic migration/erase.
 [Update boundaries](updates.md).
 
-`nfcv_emulation_start_from_image()` loads the original, configures the session,
-and starts the PHY. Only the PHY owns detector state and antenna switching;
-`app_state.loaded_original` is the reload snapshot. Follow `.clang-format`,
+`nfcv_emulation_start_from_image()` configures the session from the prepared image
+and starts the PHY. Only the PHY owns detector state and antenna switching.
+`app_state.loaded_image` holds the image used for emulation. Follow `.clang-format`,
 `.prettierrc.json`, `.editorconfig`, and standard Black formatting for Python.
 
 ## HTTP API
 
 The browser and tools share `/api/v1/` at `http://192.168.7.1` on the Ultra
 or `http://127.0.0.1:8080` in the simulator. `GET state` and `GET tags` return
-JSON; `GET tag?id=N` exports the saved NFCI image. Mutations use POST;
+JSON. `GET tag?id=N` exports the saved NFCI image. Add `&emulation=1` to get the
+prepared copy that playback uses. Mutations use POST.
 `import?name=X` takes NFCI bytes as `application/octet-stream`, not `.nfc` text.
+`POST scan` pauses emulation and returns an unsaved NFCI image, or `404 no-tag`.
 URL-encode query values. Bodies are limited to 1024 bytes and complete requests
 to 2048 bytes. See [API routes](../src/net/api.c) and
 [HTTP validation](../src/net/http.c) for the full contract.
 
-Library edits pause RF; `emulate?id=N` reloads the original and resumes it.
+Library edits pause RF. `emulate?id=N` prepares a fresh copy and resumes emulation.
+A SLIX-L copy uses the SLIX profile, privacy off, privacy and destroy passwords of
+`0F 0F 0F 0F`, and an all-zero EAS password. The UID, memory, and locks come from the saved image.
 A busy reader field rejects activation. Reader writes only affect active RAM.
 
 NFCI v1 (NFC Image) uses a 128-byte header, raw memory, then one lock byte (0 or 1) per
@@ -116,7 +122,8 @@ eight-byte UID is in display order. Bytes 26–27 and 88–127 must be zero;
 28–67 are ignored. SLIX-L has eight blocks; the maximum is 160.
 See [field offsets](../src/core/image_format.h),
 [validation](../src/core/tag_image.c), and [Flipper conversion](../web/formats.js).
-Exports retain supported memory, UID, locks, and passwords, not all Flipper fields.
+Flipper v4 exports use `Device type: SLIX` and `Capabilities: Default`. The individual
+export uses the prepared emulation settings. The library backup retains saved settings.
 
 `NFCV_DIAGNOSTICS` builds start paused and expose bring-up routes in the API
 source. Each request renews their 90-second control lease. Use synthetic tags:

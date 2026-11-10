@@ -12,4 +12,5 @@ typedef struct {
     uint16_t size;
 } tag_image_t;
 bool tag_image_validate(const uint8_t *data, size_t size);
+void tag_image_prepare_emulation(tag_image_t *image);
 bool tag_name_validate(const char *name);

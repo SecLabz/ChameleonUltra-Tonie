@@ -1,3 +1,4 @@
+#include "cards/slix/tag.h"
 #include "common/bytes.h"
 #include "tag_image.h"
 #include <string.h>
@@ -71,4 +72,16 @@ bool tag_image_validate(const uint8_t *p, size_t n) {
         if (p[i])
             return false;
     return true;
+}
+
+void tag_image_prepare_emulation(tag_image_t *image) {
+    uint8_t *bytes = image->bytes;
+    if (bytes[TAG_IMAGE_PROFILE_OFFSET] != TAG_IMAGE_SLIX_L)
+        return;
+    bytes[TAG_IMAGE_PROFILE_OFFSET] = TAG_IMAGE_SLIX;
+    bytes[TAG_IMAGE_FLAGS_OFFSET] &= ~TAG_IMAGE_FLAG_PRIVACY;
+    uint8_t *passwords = bytes + TAG_IMAGE_PASSWORDS_OFFSET;
+    memset(passwords, 0, 4u * SLIX_PASSWORD_TYPE_COUNT);
+    write_le32(passwords + 4u * SLIX_PASSWORD_TYPE_PRIVACY, 0x0f0f0f0fu);
+    write_le32(passwords + 4u * SLIX_PASSWORD_TYPE_DESTROY, 0x0f0f0f0fu);
 }

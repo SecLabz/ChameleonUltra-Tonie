@@ -32,7 +32,8 @@
           </div>
           <div class="library-actions">
             <button class="quiet" id="export-all">Export all</button
-            ><button class="primary" id="import-button">＋ Import</button>
+            ><button id="import-button">＋ Import</button
+            ><button class="primary" id="scan-button">＋ Scan</button>
           </div>
         </div>
         <label class="search"
@@ -103,6 +104,19 @@
         <div class="actions">
           <button id="modal-cancel" type="button">Cancel</button
           ><button id="modal-confirm" type="submit" value="confirm" class="primary">Save</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="scan-dialog" aria-labelledby="scan-title">
+      <form id="scan-form">
+        <h2 id="scan-title">Scan a tag</h2>
+        <p id="scan-message" role="status"></p>
+        <label id="scan-details" hidden
+          >Name<input id="scan-name" maxlength="63" autocomplete="off" required
+        /></label>
+        <div class="actions">
+          <button id="scan-cancel" type="button">Cancel</button
+          ><button id="scan-save" type="submit" class="primary" hidden>Save</button>
         </div>
       </form>
     </dialog>

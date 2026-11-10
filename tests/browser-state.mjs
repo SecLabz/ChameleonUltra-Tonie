@@ -12,10 +12,21 @@ function browser() {
     if (!nodes.has(id))
       nodes.set(id, {
         listeners: new Map(),
+        dataset: {},
+        open: false,
         value: '',
         textContent: '',
         innerHTML: '',
+        focus() {},
+        select() {},
         classList: { toggle() {} },
+        showModal() {
+          this.open = true;
+        },
+        close(v) {
+          this.open = false;
+          this.returnValue = v;
+        },
         closest() {
           return null;
         },
@@ -110,13 +121,23 @@ const state = (active) => ({
   assert.equal(b.nodes.get('toast').textContent, '1 tag imported. Playback is paused.');
   b.run('let saved;download=(blob,name)=>{saved={blob,name}}');
   const exported = b.run('exportTag(tags[0])');
-  assert.equal(b.requests[5].path, '/api/v1/tag?id=1');
-  await reply(b, 5, image);
+  assert.equal(b.requests[5].path, '/api/v1/tag?id=1&emulation=1');
+  const emulated = image.slice();
+  emulated[5] = 1;
+  emulated[7] &= ~1;
+  emulated.fill(0x0f, 76, 84);
+  await reply(b, 5, emulated);
   await exported;
   assert.equal(b.run('saved.name'), 'Synthetic.nfc');
-  assert.equal(await b.run('saved.blob.text()'), text);
+  assert.equal(
+    await b.run('saved.blob.text()'),
+    text
+      .replace('Password Privacy: 01 02 03 04', 'Password Privacy: 0F 0F 0F 0F')
+      .replace('Password Destroy: 00 00 00 00', 'Password Destroy: 0F 0F 0F 0F')
+      .replace('Privacy Mode: true', 'Privacy Mode: false'),
+  );
 }
-console.log('Embedded page: NFC file import and export preserve the complete tag image');
+console.log('Embedded page: NFC file import and SLIX emulation export passed');
 // An old library response arrives after a successful mutation.
 {
   const b = browser();
@@ -314,6 +335,48 @@ console.log(
   b.nodes.get('files').click = () => opened++;
   click(b, 'active-panel', { id: 'first-import', dataset: {} });
   assert.equal(opened, 1);
+}
+// Scan drawer detects tag and saves scanned NFCI.
+{
+  const b = browser(),
+    image = new Uint8Array(fs.readFileSync('build/test-slix.nfci'));
+  await reply(b, 0, state(false));
+  await reply(b, 1, { tags: [] });
+  b.nodes.get('scan-button').onclick();
+  assert.equal(b.nodes.get('scan-dialog').open, true);
+  assert.equal(b.nodes.get('scan-details').hidden, true);
+  assert.equal(b.requests[2].path, '/api/v1/scan');
+  await reply(b, 2, image);
+  assert.equal(b.nodes.get('scan-details').hidden, false);
+  assert.equal(b.nodes.get('scan-name').value, 'Tonie 000001');
+  b.nodes.get('scan-name').value = 'My Tonie';
+  const saved = b.nodes.get('scan-form').onsubmit({ preventDefault() {} });
+  await tick();
+  assert.equal(b.nodes.get('scan-dialog').open, false);
+  assert.equal(b.requests[3].path, '/api/v1/import?name=My%20Tonie');
+  assert.deepEqual(b.requests[3].options.body, image);
+  await reply(b, 3, { ok: true, id: 2 });
+  await reply(b, 4, state(false));
+  await reply(b, 5, { tags: [{ id: 2, name: 'My Tonie', profile: 2, uid: 'E004030201000001' }] });
+  await saved;
+  assert.equal(b.nodes.get('toast').textContent, 'Tag scanned and saved.');
+}
+// Cancelling after headers arrive must discard the pending response body.
+{
+  const b = browser();
+  await reply(b, 0, state(false));
+  await reply(b, 1, { tags: [] });
+  const scan = b.nodes.get('scan-button').onclick();
+  let finishBody;
+  const body = new Promise((resolve) => (finishBody = resolve));
+  b.requests[2].resolve({ ok: true, arrayBuffer: () => body });
+  await tick();
+  b.nodes.get('scan-cancel').onclick();
+  assert.equal(b.requests[2].options.signal.aborted, true);
+  finishBody(Uint8Array.from(fs.readFileSync('build/test-slix.nfci')).buffer);
+  await scan;
+  assert.equal(b.nodes.get('scan-details').hidden, true);
+  assert.equal(b.run('scannedBytes'), null);
 }
 console.log(
   'Browser delegation: nested clicks, rerenders, busy/disabled guards and action routing passed',

@@ -143,6 +143,17 @@ export function importFlipper(text) {
       );
   return validateImage(b);
 }
+export function inspectImage(bytes) {
+  const b = validateImage(bytes),
+    uid = Array.from(b.subarray(IMAGE_FIELD.UID, IMAGE_FIELD.UID + b[IMAGE_FIELD.UID_SIZE]), (x) =>
+      x.toString(16).padStart(2, '0').toUpperCase(),
+    ).join('');
+  return {
+    uid,
+    profile: b[IMAGE_FIELD.PROFILE] === IMAGE_PROFILE.SLIX_L ? 'SLIX-L' : 'SLIX',
+    privacy: !!(b[IMAGE_FIELD.FLAGS] & IMAGE_FLAG.PRIVACY),
+  };
+}
 export function exportFlipper(bytes) {
   const b = validateImage(bytes),
     v = new DataView(b.buffer, b.byteOffset, b.byteLength),
@@ -151,29 +162,29 @@ export function exportFlipper(bytes) {
   const lines = [
     'Filetype: Flipper NFC device',
     'Version: 4',
-    `Device type: ${b[IMAGE_FIELD.PROFILE] === IMAGE_PROFILE.SLIX_L ? 'SLIX-L' : 'SLIX'}`,
+    'Device type: SLIX',
     `UID: ${hexText(b.subarray(IMAGE_FIELD.UID, IMAGE_FIELD.UID + b[IMAGE_FIELD.UID_SIZE]))}`,
-  ];
-  lines.push(
     `DSFID: ${hexText(b.subarray(IMAGE_FIELD.DSFID, IMAGE_FIELD.DSFID + 1))}`,
     `AFI: ${hexText(b.subarray(IMAGE_FIELD.AFI, IMAGE_FIELD.AFI + 1))}`,
     `IC Reference: ${hexText(b.subarray(IMAGE_FIELD.IC_REF, IMAGE_FIELD.IC_REF + 1))}`,
-    'Block Size: 04',
+    `Lock DSFID: ${!!(b[IMAGE_FIELD.FLAGS] & IMAGE_FLAG.DSFID_LOCKED)}`,
+    `Lock AFI: ${!!(b[IMAGE_FIELD.FLAGS] & IMAGE_FLAG.AFI_LOCKED)}`,
     `Block Count: ${count}`,
+    'Block Size: 04',
     `Data Content: ${hexText(m)}`,
     `Security Status: ${hexText(b.subarray(HEADER + count * IMAGE_BLOCK_BYTES))}`,
+    'Capabilities: Default',
+  ];
+  for (const [i, key] of ['Read', 'Write', 'Privacy', 'Destroy', 'EAS'].entries()) {
+    const offset = IMAGE_FIELD.PASSWORDS + i * 4;
+    const password = b.slice(offset, offset + 4);
+    if (i >= 2 || password.some(Boolean))
+      lines.push(`Password ${key}: ${hexText(password.reverse())}`);
+  }
+  lines.push(
+    `Privacy Mode: ${!!(b[IMAGE_FIELD.FLAGS] & IMAGE_FLAG.PRIVACY)}`,
+    `Lock EAS: ${!!(b[IMAGE_FIELD.FLAGS] & IMAGE_FLAG.EAS_LOCKED)}`,
   );
-  for (const [key, bit] of [
-    ['Privacy Mode', IMAGE_FLAG.PRIVACY],
-    ['Lock DSFID', IMAGE_FLAG.DSFID_LOCKED],
-    ['Lock AFI', IMAGE_FLAG.AFI_LOCKED],
-    ['Lock EAS', IMAGE_FLAG.EAS_LOCKED],
-  ])
-    lines.push(`${key}: ${!!(b[IMAGE_FIELD.FLAGS] & bit)}`);
-  for (const [i, key] of ['Read', 'Write', 'Privacy', 'Destroy', 'EAS'].entries())
-    lines.push(
-      `Password ${key}: ${hexText(b.slice(IMAGE_FIELD.PASSWORDS + i * 4, IMAGE_FIELD.PASSWORDS + (i + 1) * 4).reverse())}`,
-    );
   return lines.join('\n') + '\n';
 }
 /* Small uncompressed ZIP writer; NFC text files are tiny, no ZIP dependency. */

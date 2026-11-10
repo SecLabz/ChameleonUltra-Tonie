@@ -1,6 +1,8 @@
+#include "cards/slix/tag.h"
 #include "common/crc32.h"
 #include "common/bytes.h"
 #include "core/tag_library.h"
+#include "tag/nfcv_reader.h"
 #include "tag/nfcv_session.h"
 #include "tag/protocol/nfcv/commands.h"
 #include <assert.h>
@@ -263,6 +265,21 @@ static bool unlock(uint8_t id, uint32_t password) {
     return vcommand(cmd, sizeof(cmd)) && vresponse.len == 1;
 }
 
+static void slix_compatibility(void) {
+    tag_image_t im = image();
+    im.bytes[TAG_IMAGE_FLAGS_OFFSET] |= TAG_IMAGE_FLAG_PRIVACY;
+    write_le32(im.bytes + TAG_IMAGE_PASSWORDS_OFFSET + 4u * SLIX_PASSWORD_TYPE_PRIVACY, 0x01020304);
+    tag_image_prepare_emulation(&im);
+    assert(nfcv_session_configure_from_image(&im));
+    nfcv_session_init();
+    const uint8_t inventory[] = {0x26u, ISO15693_CMD_INVENTORY, 0u};
+    assert(vcommand(inventory, sizeof(inventory)));
+    assert(!unlock(SLIX_PASSWORD_PRIVACY, 0x01020304));
+    assert(unlock(SLIX_PASSWORD_PRIVACY, 0x0f0f0f0f));
+    assert(unlock(SLIX_PASSWORD_DESTROY, 0x0f0f0f0f));
+    puts("SLIX compatibility: visible at startup and default passwords accepted");
+}
+
 static void inventory_slots(void) {
     /* Cover every slot, including a mask whose slot bits cross a byte boundary. */
     const uint8_t masks[] = {0, 5};
@@ -386,13 +403,73 @@ static void bounds(void) {
     puts("NFC-V: 320 multi-block response boundaries, count overflow and frame bounds passed");
 }
 
+static bool sim_present, sim_reject_read_option;
+static tag_image_t sim_image;
+
+void nfcv_reader_phy_open(void) {
+    if (sim_present) {
+        assert(nfcv_session_configure_from_image(&sim_image));
+        nfcv_session_init();
+    }
+}
+
+void nfcv_reader_phy_close(void) {}
+
+size_t nfcv_reader_phy_exchange(const uint8_t *tx, size_t tx_len, uint8_t *rx, size_t rx_cap) {
+    if (!sim_present || tx_len > ISO15693_FRAME_MAX_BYTES ||
+        (sim_reject_read_option && tx[1] == ISO15693_CMD_READ_SINGLE &&
+         (tx[0] & ISO15693_REQ_OPTION)))
+        return 0;
+    iso15693_frame_t frame = {.byte_count = (uint16_t)tx_len,
+                              .crc_ok = iso15693_check_crc(tx, (uint16_t)tx_len),
+                              .high_data_rate = true,
+                              .single_subcarrier = true};
+    memcpy(frame.bytes, tx, tx_len);
+    nfcv_reply_t reply;
+    if (!nfcv_session_handle_frame(&frame, &reply) ||
+        (size_t)reply.len + ISO15693_CRC_SIZE > rx_cap)
+        return 0;
+    memcpy(rx, reply.bytes, reply.len);
+    iso15693_append_crc(rx, reply.len);
+    return (size_t)reply.len + ISO15693_CRC_SIZE;
+}
+
+static void reader_scan(void) {
+    tag_image_t out;
+    sim_present = false;
+    assert(nfcv_reader_scan(&out) == RESULT_NO_TAG);
+
+    sim_present = true;
+    sim_image = image();
+    sim_image.bytes[TAG_IMAGE_HEADER_SIZE + 32u + 7u] = 1u;
+    assert(nfcv_reader_scan(&out) == RESULT_OK);
+    assert(out.size == sim_image.size && !memcmp(out.bytes, sim_image.bytes, out.size));
+
+    sim_reject_read_option = true;
+    assert(nfcv_reader_scan(&out) == RESULT_OK);
+    assert(out.size == sim_image.size && !memcmp(out.bytes, sim_image.bytes, out.size));
+    sim_reject_read_option = false;
+
+    sim_image.bytes[TAG_IMAGE_FLAGS_OFFSET] = TAG_IMAGE_FLAG_PRIVACY;
+    write_le32(sim_image.bytes + TAG_IMAGE_PASSWORDS_OFFSET + 8u, 0x5b6efd7fu);
+    assert(nfcv_reader_scan(&out) == RESULT_OK);
+    assert(out.size == sim_image.size && !memcmp(out.bytes, sim_image.bytes, out.size));
+
+    /* Privacy-protected SLIX-L with non-Tonie password fails to unlock. */
+    write_le32(sim_image.bytes + TAG_IMAGE_PASSWORDS_OFFSET + 8u, 0x01020304u);
+    assert(nfcv_reader_scan(&out) == RESULT_INVALID_DATA);
+    puts("NFC-V reader: SLIX/SLIX-L scan and Tonie privacy auto-unlock passed");
+}
+
 int main(void) {
     storage();
     incompatible_store();
     frame_crc();
     slix();
+    slix_compatibility();
     inventory_slots();
     slix_controls();
     bounds();
+    reader_scan();
     puts("Core tests passed under address/undefined-behavior sanitizers");
 }
